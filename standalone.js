@@ -210,10 +210,22 @@
       if (e.name === "AbortError") throw err("cancelled");
       throw err("offline", "No connection");
     }
-    if (res.status === 429) throw err("rate_limited");
+    const googleSays = async () => { try { return ((await res.clone().json()).error.message || "").slice(0, 300); } catch (e) { return ""; } };
+    // 429 is a quota limit on this key, not a busy server. Each model has its own quota, so try one other Flash model.
+    if (res.status === 429) {
+      const msg = await googleSays();
+      if (!opts._quota) {
+        const alt = await pickModel(s.geminiKey, s.model).catch(() => null);
+        if (alt && alt !== s.model) {
+          saveSettings({ model: alt }); window.dispatchEvent(new CustomEvent("jobapp-model", { detail: alt }));
+          return gemini(input, { ...opts, _quota: true }, json, retried);
+        }
+      }
+      const e = err("quota", msg); e.status = 429; throw e;
+    }
     if (res.status === 400 || res.status === 401 || res.status === 403) {
-      let msg = ""; try { msg = (await res.json()).error.message || ""; } catch (e) {}
-      throw err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg);
+      const msg = await googleSays();
+      const e = err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg); e.status = res.status; throw e;
     }
     // Google's free tier is sometimes overloaded: wait and try again, then try another Flash model.
     if ((res.status === 503 || res.status === 500) && (opts._busy || 0) < 3 && !(opts.signal && opts.signal.aborted)) {
@@ -225,7 +237,7 @@
       await new Promise(r => setTimeout(r, 1500 * n));
       return gemini(input, { ...opts, _busy: n }, json, retried);
     }
-    if (res.status === 503 || res.status === 500) throw err("rate_limited", "Google's AI is busy");
+    if (res.status === 503 || res.status === 500) { const e = err("rate_limited", await googleSays()); e.status = res.status; throw e; }
     if (res.status === 404 && !retried) {
       const model = await pickModel(s.geminiKey).catch(() => null);
       if (model && model !== s.model) {
@@ -234,7 +246,7 @@
         return gemini(input, opts, json, true);
       }
     }
-    if (!res.ok) throw err("ai_" + res.status);
+    if (!res.ok) { const e = err("ai_" + res.status, await googleSays()); e.status = res.status; throw e; }
     let text = "", finish = "";
     const take = chunk => {
       const c = chunk && chunk.candidates && chunk.candidates[0];

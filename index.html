@@ -585,7 +585,7 @@ async function generate(kind){
   }catch(e){
     if(e.code==="cancelled"){$("d-live").hidden=true}
     else{if(e.text)renderMd(out,e.text);title.textContent=k.label;
-      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="rate_limited"?"Too many requests just now. Try again in a minute.":"Couldn't finish writing ("+e.code+"). Try again.")}
+      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?"Your free AI limit is used up for now. Try again later, or see My CV › App connections.":e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":"Couldn't finish writing ("+e.code+"). Try again.")}
   }finally{document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
 }
 document.querySelectorAll(".tools .btn").forEach(b=>b.onclick=()=>generate(b.dataset.kind));
@@ -848,7 +848,14 @@ $("cvSave").onclick=async()=>{
       if (jobapp.settings().geminiKey) {
         msg.textContent = "Testing AI…";
         try { await jobapp.sample("Reply with the single word OK."); out.push("AI works"); }
-        catch (e) { out.push(e.code === "not_granted" ? "AI key not accepted" : e.code === "rate_limited" ? "Google's AI is busy right now. Try again in a minute" : "AI test failed (" + e.code + ")"); }
+        catch (e) {
+          const why = e.message && e.message !== e.code ? " Google says: " + e.message : "";
+          const code = e.status ? " (" + e.status + ")" : "";
+          out.push((e.code === "not_granted" ? "AI key not accepted" + code
+            : e.code === "quota" ? "This AI key has no free quota left" + code
+            : e.code === "rate_limited" ? "Google's AI is busy right now" + code
+            : "AI test failed (" + e.code + ")") + "." + why);
+        }
       }
       msg.textContent = out.join(" · ") || "Saved";
       const cur = jobapp.settings(); if (cur.githubToken && cur.geminiKey) $("setupHint")?.remove();
@@ -1008,6 +1015,235 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 
 /* Offline support + install on the home screen */
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+/* Voice assistant ("Jarvis"): tap the mic, speak, and it answers out loud.
+   - Listening uses the browser's speech recognition (Safari and Chrome). Where that isn't available, type or use the keyboard's mic.
+   - Speaking uses the device's own voices (a British voice when there is one).
+   - Answers come from Gemini with your jobs, interviews and CV as context. It can open a job or a tab for you.
+   - It never sends or applies for anything. */
+const voice = (() => {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const synth = window.speechSynthesis;
+  const VPREF = "jobapp-voice";
+  let rec = null, listening = false, talkMode = false, history = [], busy = null, unlocked = false;
+  const prefs = () => { try { return JSON.parse(localStorage.getItem(VPREF) || "{}"); } catch (e) { return {}; } };
+  const savePrefs = p => { try { localStorage.setItem(VPREF, JSON.stringify({ ...prefs(), ...p })); } catch (e) {} };
+
+  /* --- UI --- */
+  const css = document.createElement("style");
+  css.textContent = `
+.mic-fab{position:fixed;left:max(16px,calc(env(safe-area-inset-left,0px) + 16px));bottom:calc(env(safe-area-inset-bottom,0px) + 16px);width:56px;height:56px;border-radius:999px;border:0;background:#111827;color:#fff;font-size:24px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:4;cursor:pointer}
+.mic-fab:focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+.va-orb{width:84px;height:84px;border-radius:999px;margin:6px auto;background:radial-gradient(circle at 35% 35%,#7dd3fc,#2563eb 60%,#1e3a8a);box-shadow:0 0 0 0 rgba(37,99,235,.5);transition:transform .2s}
+.va-orb.listen{animation:va-pulse 1.2s infinite}
+.va-orb.think{animation:va-spin 1s linear infinite;background:conic-gradient(#60a5fa,#1e3a8a,#60a5fa)}
+.va-orb.speak{animation:va-talk .5s ease-in-out infinite alternate}
+@keyframes va-pulse{0%{box-shadow:0 0 0 0 rgba(37,99,235,.55)}100%{box-shadow:0 0 0 22px rgba(37,99,235,0)}}
+@keyframes va-spin{to{transform:rotate(360deg)}}
+@keyframes va-talk{from{transform:scale(.94)}to{transform:scale(1.06)}}
+@media (prefers-reduced-motion:reduce){.va-orb{animation:none!important}}
+.va-state{text-align:center;color:var(--muted,#6b7280);font-size:14px;min-height:20px}
+.va-log{display:flex;flex-direction:column;gap:8px;max-height:38vh;overflow-y:auto}
+.va-row{display:flex;gap:8px}
+.va-row input{flex:1;min-width:0;font:inherit;padding:10px 12px;border:1px solid var(--line,#d1d5db);border-radius:10px;background:var(--surface,#fff);color:inherit}
+.va-opts{display:flex;flex-direction:column;gap:8px;font-size:14px}
+.va-opts label{display:flex!important;flex-direction:row!important;align-items:center;gap:8px;margin:0!important}
+.va-opts input{width:auto;margin:0}
+.va-hint{font-size:13px;color:var(--muted,#6b7280);margin:0}
+.chat-input .mic{min-width:44px}
+`;
+  document.head.append(css);
+
+  const fab = el("button", "mic-fab", "🎙");
+  fab.type = "button"; fab.setAttribute("aria-label", "Talk to your assistant");
+  document.body.append(fab);
+
+  const bg = el("div", "sheet-bg"); bg.id = "voiceBg"; bg.hidden = true;
+  bg.innerHTML = `
+  <div class="sheet" role="dialog" aria-label="Voice assistant">
+    <div class="sheet-head"><b>Jarvis</b><button class="btn sm" id="va-close" type="button">Close</button></div>
+    <div class="va-orb" id="va-orb" aria-hidden="true"></div>
+    <p class="va-state" id="va-state" aria-live="polite"></p>
+    <div class="va-log chat" id="va-log"></div>
+    <div class="va-row"><input id="va-in" type="text" placeholder="Ask anything, e.g. What's next today?" enterkeyhint="send"><button class="btn" id="va-send" type="button">Send</button></div>
+    <div class="va-row"><button class="btn primary" id="va-talk" type="button" style="flex:1">Tap to talk</button></div>
+    <div class="va-opts">
+      <label><input type="checkbox" id="va-hands"> Keep listening after each answer</label>
+      <label><input type="checkbox" id="va-mute"> Don't speak answers</label>
+    </div>
+    <p class="va-hint" id="va-hint"></p>
+  </div>`;
+  document.body.append(bg);
+  const orb = $("va-orb"), stateEl = $("va-state");
+  const setState = (mode, text) => { orb.className = "va-orb " + (mode || ""); stateEl.textContent = text || ""; };
+  $("va-hands").checked = !!prefs().hands; $("va-mute").checked = !!prefs().mute;
+  $("va-hands").onchange = e => { savePrefs({ hands: e.target.checked }); talkMode = e.target.checked; };
+  $("va-mute").onchange = e => { savePrefs({ mute: e.target.checked }); if (e.target.checked) synth && synth.cancel(); };
+  if (!Rec) $("va-hint").textContent = "This browser can't listen yet. Type your question, or tap the mic on your keyboard to dictate.";
+
+  /* --- Speaking --- */
+  let voiceObj = null;
+  function pickVoice() {
+    if (!synth) return null;
+    const vs = synth.getVoices();
+    const want = [/Daniel/i, /Arthur/i, /Google UK English Male/i, /Oliver/i, /en-GB/i];
+    for (const w of want) { const v = vs.find(v => w.test(v.name) || w.test(v.lang)); if (v) return v; }
+    return vs.find(v => /^en/i.test(v.lang)) || null;
+  }
+  if (synth) { voiceObj = pickVoice(); synth.onvoiceschanged = () => { voiceObj = pickVoice(); }; }
+  function unlock() {  // iPhone only lets a page speak after a tap, so say nothing once on the first tap
+    if (unlocked || !synth) return; unlocked = true;
+    try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; synth.speak(u); } catch (e) {}
+  }
+  function plain(md) { return String(md).replace(/```[\s\S]*?```/g, "").replace(/[*_#>`]/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/https?:\/\/\S+/g, "the link").replace(/£(\d+)k/gi, "£$1 thousand"); }
+  function speak(text) {
+    return new Promise(resolve => {
+      if (!synth || $("va-mute").checked || !text) return resolve();
+      synth.cancel();
+      // Short chunks: Safari stops long utterances part way through.
+      const parts = plain(text).match(/[^.!?\n]+[.!?]?/g) || [];
+      if (!parts.length) return resolve();
+      setState("speak", "Speaking… tap the orb to stop");
+      parts.forEach((p, i) => {
+        const u = new SpeechSynthesisUtterance(p.trim());
+        if (voiceObj) u.voice = voiceObj; u.lang = (voiceObj && voiceObj.lang) || "en-GB"; u.rate = 1.03; u.pitch = 0.95;
+        if (i === parts.length - 1) { u.onend = () => resolve(); u.onerror = () => resolve(); }
+        synth.speak(u);
+      });
+    });
+  }
+  orb.onclick = () => { if (synth && synth.speaking) { synth.cancel(); setState("", ""); } else listen(); };
+
+  /* --- Listening --- */
+  function listen(onText) {
+    unlock();
+    if (!Rec) { $("va-in").focus(); return; }
+    if (listening) { rec && rec.stop(); return; }
+    synth && synth.cancel();
+    rec = new Rec(); rec.lang = "en-GB"; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+    let final = "";
+    rec.onresult = e => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0].transcript; if (e.results[i].isFinal) final += t; else interim += t; }
+      setState("listen", "“" + (final + interim).trim() + "”");
+    };
+    rec.onerror = e => {
+      listening = false;
+      setState("", e.error === "not-allowed" || e.error === "service-not-allowed" ? "Microphone not allowed. Allow it for this site in your browser settings, or type instead."
+        : e.error === "no-speech" ? "I didn't hear anything. Tap to talk again." : "Couldn't listen (" + e.error + "). Type instead.");
+    };
+    rec.onend = () => {
+      listening = false; $("va-talk").textContent = "Tap to talk";
+      const t = final.trim();
+      if (t) (onText || ask)(t); else if (orb.classList.contains("listen")) setState("", "");
+    };
+    try { rec.start(); listening = true; $("va-talk").textContent = "Listening… tap to stop"; setState("listen", "Listening…"); }
+    catch (e) { listening = false; setState("", "Couldn't start the microphone. Type instead."); }
+  }
+
+  /* --- Thinking --- */
+  function context() {
+    const d = new Date();
+    const list = jobs.filter(j => j.status !== "rejected").slice(0, 40).map(j => ({ id: j.id, title: j.title, company: j.company, location: j.location, status: j.status, pay: j.pay || "", visa: j.visa, applied: j.applied || "", next: j.next || "", nextDate: j.nextDate || "" }));
+    const inv = invites.filter(i => i.status !== "dismissed").slice(0, 15).map(i => ({ company: i.company, role: i.role, stage: i.stage, start: i.start || "", status: i.status, summary: i.summary }));
+    return `Today is ${d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}, time ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} UK.\nJOBS (his tracker): ${JSON.stringify(list)}\nINTERVIEW EMAILS: ${JSON.stringify(inv)}\nHIS CV (summary): ${(cv || "").slice(0, 3500)}`;
+  }
+  const RULES = `You are Jarvis, Sunil Dennis's calm, witty, British-mannered personal job search assistant inside his job app. He is a Python/Django full stack developer in Sheffield, on a UK Student visa until January 2027 (so only part-time up to 20 hours a week in term, or employed temporary work, never freelance or self-employed); his Graduate visa starts January 2027.
+Your answers are SPOKEN aloud, so:
+- Reply in 1 to 4 short sentences of plain speech. No lists, markdown, emojis or URLs. Say dates like "Tuesday the 20th".
+- Address him as Sunil now and then, or "sir" sparingly for fun.
+- Use only the data given for facts about his jobs and interviews. If something isn't there, say so.
+- You can coach him: practice questions, quick feedback, motivation, what to do next.
+- You never send emails or apply for jobs. If asked, say he can tap the buttons in the app and send it himself.
+Return JSON: {"say": what you will say, "action": null or one of {"type":"open_job","id": job id} | {"type":"tab","name":"jobs"|"inbox"|"week"|"cv"} | {"type":"filter","name":"new"|"saved"|"applied"|"interview"|"active"}}.
+Use an action only when he asks to open, show or go to something.`;
+
+  function bubble(role, text) { const b = el("div", "bubble " + (role === "user" ? "me" : "them")); b.textContent = text; $("va-log").append(b); b.scrollIntoView({ block: "nearest" }); return b; }
+
+  async function ask(text) {
+    text = String(text || "").trim(); if (!text) return;
+    unlock();
+    bubble("user", text); $("va-in").value = "";
+    history.push({ role: "user", content: text });
+    history = history.slice(-12);
+    busy?.abort(); busy = new AbortController(); const my = busy;
+    setState("think", "Thinking…");
+    let reply = "", action = null;
+    try {
+      const turns = [{ role: "user", content: RULES + "\n\n" + context() + "\n\nReady?" }, { role: "assistant", content: '{"say":"Ready.","action":null}' }, ...history];
+      const r = await sample.json(turns, { signal: my.signal, cache: false, modelTier: "default" });
+      reply = (r && r.say) || "Sorry, I lost my train of thought. Try again?"; action = r && r.action;
+    } catch (e) {
+      if (e.code === "cancelled") return;
+      reply = e.code === "not_granted" ? "I need your free Gemini key first. Add it in My CV, App connections."
+        : e.code === "quota" ? "I've used up the free AI allowance for now. Try again a bit later."
+        : e.code === "offline" ? "I'm offline at the moment." : "Google's AI is busy. Give it a minute and ask again.";
+    }
+    if (my !== busy) return;
+    history.push({ role: "assistant", content: JSON.stringify({ say: reply, action: null }) });
+    bubble("assistant", reply);
+    doAction(action);
+    await speak(reply);
+    setState("", "");
+    if (talkMode && Rec && !$("va-mute").checked && !bg.hidden) listen();
+  }
+
+  function doAction(a) {
+    if (!a || typeof a !== "object") return;
+    if (a.type === "open_job" && jobs.some(j => j.id === a.id)) { setTab("jobs"); openDetail(a.id); }
+    else if (a.type === "tab" && ["jobs", "inbox", "week", "cv"].includes(a.name)) setTab(a.name);
+    else if (a.type === "filter" && typeof a.name === "string") { setTab("jobs"); filter = a.name; store("jt-filter", a.name); renderJobs(); }
+  }
+
+  /* --- Wiring --- */
+  function open() {
+    unlock(); talkMode = $("va-hands").checked;
+    bg.hidden = false;
+    if (!history.length) {
+      const h = new Date().getHours();
+      const hi = (h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening") + ", Sunil. What can I do for you?";
+      bubble("assistant", hi); history.push({ role: "assistant", content: JSON.stringify({ say: hi, action: null }) });
+      speak(hi).then(() => { setState("", ""); if (Rec) listen(); });
+    } else if (Rec) listen();
+  }
+  function close() { busy?.abort(); rec && rec.abort && rec.abort(); listening = false; synth && synth.cancel(); setState("", ""); bg.hidden = true; }
+  fab.onclick = open;
+  $("va-close").onclick = close;
+  bg.addEventListener("click", e => { if (e.target === bg) close(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !bg.hidden) close(); });
+  $("va-talk").onclick = () => listen();
+  $("va-send").onclick = () => ask($("va-in").value);
+  $("va-in").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); ask($("va-in").value); } });
+
+  /* --- Voice in the practice interview: the interviewer speaks, and you can answer by talking --- */
+  const chatSend = $("chatSend");
+  if (chatSend) {
+    const mic = el("button", "btn mic", "🎙"); mic.type = "button"; mic.setAttribute("aria-label", "Answer by talking");
+    chatSend.before(mic);
+    mic.onclick = () => {
+      if (!Rec) { $("chatIn").focus(); return; }
+      unlock(); mic.textContent = "●";
+      listen(t => { $("chatIn").value = ($("chatIn").value + " " + t).trim(); mic.textContent = "🎙"; });
+      if (!listening) mic.textContent = "🎙";
+    };
+    // Speak each interviewer message once it has finished streaming.
+    const log = $("chatLog"); let spoken = 0;
+    const check = () => {
+      const them = log.querySelectorAll(".bubble.them");
+      if (!them.length) { spoken = 0; return; }
+      if (chatSend.disabled || them.length <= spoken) return;
+      spoken = them.length;
+      const last = them[them.length - 1].textContent;
+      if (last && last !== "Thinking…") speak(last).then(() => setState("", ""));
+    };
+    new MutationObserver(check).observe(log, { childList: true });
+    new MutationObserver(check).observe(chatSend, { attributes: true, attributeFilter: ["disabled"] });
+    $("chatEnd").addEventListener("click", () => synth && synth.cancel());
+  }
+
+  return { open, close, ask, speak };
+})();
+window.jobapp && (window.jobapp.voice = voice);
 
 /* --- start --- */
 const f0=load("jt-filter");if(f0)filter=f0;
