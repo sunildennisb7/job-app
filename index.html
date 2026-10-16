@@ -1108,7 +1108,7 @@ const boardView = (() => {
     meta.append(el("span", null, ago(r.d)), el("span", "bd-src", SOURCES[r.s] || r.s));
     if (r.m >= 35) meta.append(el("span", null, `CV match ${r.m}`));
     it.append(meta);
-    if (r.x) { const x = el("span", "note", r.x.length >= 200 ? r.x + "…" : r.x); it.append(x); }
+    if (r.x) it.append(el("span", "note", r.x.length > 200 ? r.x.slice(0, 200).trimEnd() + "…" : r.x));
     const acts = el("div", "acts");
     if (r.u) { const a = el("a", "btn sm", "Open"); a.href = r.u; a.target = "_blank"; a.rel = "noopener noreferrer"; acts.append(a); }
     const have = inTracker(r);
@@ -1126,9 +1126,93 @@ const boardView = (() => {
       } catch (e) { save.textContent = "Couldn't save"; }
       finally { save.disabled = false; }
     };
-    acts.append(save); it.append(acts);
+    const write = el("button", "btn sm", r.f ? "Write proposal" : "Tailor CV"); write.type = "button";
+    write.onclick = () => r.f ? openProposal(r) : tailorFromBoard(r);
+    acts.append(save, write); it.append(acts);
     return it;
   }
+
+  /* --- Proposal writer (freelance) and one-tap tailoring (jobs) --- */
+  async function saveToTracker(r, extra) {
+    const have = inTracker(r);
+    if (have) { if (extra) await db.collection("jobs").doc(have.id).update({ ...extra, updated: new Date().toISOString() }); return have.id; }
+    const now = new Date().toISOString(); const id = alertDocId(r.k);
+    await db.collection("jobs").doc(id).set({ title: r.t, company: r.c, location: r.l, url: r.u, pay: r.p || "", visa: r.v === "now" ? "now" : "later",
+      description: r.x || "", status: "saved", next: r.f ? "Check the proposal and send your bid" : "Tailor CV and apply", nextDate: "",
+      notes: `From the Board (${SOURCES[r.s] || r.s})${r.f ? ", freelance" : ""}`, source: r.s, score: r.m ?? null, created: now, updated: now, ...(extra || {}) });
+    await db.collection("imports").doc(id).set({ at: now }).catch(() => {});
+    return id;
+  }
+  async function tailorFromBoard(r) {
+    if (!db) return;
+    const id = await saveToTracker(r);
+    setTab("jobs"); openDetail(id);
+    aiNote(r.x && r.x.length < 600 ? "Tip: tap Edit details and paste the full advert first, so the CV matches it closely. Then tap Tailor CV." : "Tap Tailor CV to write a CV for this job.");
+  }
+
+  const pBg = el("div", "sheet-bg"); pBg.hidden = true;
+  pBg.innerHTML = `<div class="sheet" role="dialog" aria-label="Proposal">
+    <div class="sheet-head"><div style="min-width:0"><b>Proposal</b><div class="co" id="pr-for"></div></div><button class="btn sm" id="pr-close" type="button">Close</button></div>
+    <label class="note" for="pr-brief">Paste the full project brief for a closer match (optional)</label>
+    <textarea id="pr-brief" rows="4" style="font:inherit;font-size:14px;width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)"></textarea>
+    <div class="acts" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="pr-go" type="button">Write proposal</button>
+      <button class="btn" id="pr-copy" type="button" hidden>Copy</button><a class="btn" id="pr-open" target="_blank" rel="noopener noreferrer">Open posting</a></div>
+    <div class="out" id="pr-out"></div>
+    <p class="note" id="pr-msg"></p>
+  </div>`;
+  document.body.append(pBg);
+  let pCur = null, pCtl = null;
+  const pClose = () => { pCtl?.abort(); pBg.hidden = true; };
+  pBg.addEventListener("click", e => { if (e.target === pBg) pClose(); });
+  pBg.querySelector("#pr-close").onclick = pClose;
+  function openProposal(r) {
+    pCur = r; pBg.hidden = false;
+    $("pr-for").textContent = [r.t, r.p].filter(Boolean).join(" · ");
+    $("pr-open").href = r.u || "#"; $("pr-brief").value = ""; $("pr-out").replaceChildren(); $("pr-copy").hidden = true; $("pr-msg").textContent = "";
+    const j = inTracker(r);
+    if (j && j.coverLetter) { renderMd($("pr-out"), j.coverLetter); $("pr-out").dataset.text = j.coverLetter; $("pr-copy").hidden = false; $("pr-go").textContent = "Write again"; }
+    else { $("pr-go").textContent = "Write proposal"; writeProposal(); }
+  }
+  async function writeProposal() {
+    const r = pCur; if (!r) return;
+    if (!(cv || "").trim()) { $("pr-msg").textContent = "Add your CV in My CV first, so the proposal uses your real experience."; return; }
+    pCtl?.abort(); pCtl = new AbortController(); const my = pCtl;
+    const brief = $("pr-brief").value.trim() || r.x || "";
+    const out = $("pr-out"); out.replaceChildren(el("p", "note", "Writing…")); $("pr-go").disabled = true; $("pr-msg").textContent = "";
+    const prompt = `Write a winning freelance proposal (bid) from Sunil Dennis for this ${r.s === "freelancer" ? "Freelancer.com project" : "freelance or contract posting"}.
+Rules:
+- 120 to 190 words, plain text, UK English, friendly and confident, no markdown headings, no emojis.
+- First line speaks directly to the client's problem, not about Sunil. No "Dear Sir/Madam", no "I am writing to".
+- Then 2 or 3 short sentences proving he can do it, using ONLY real experience, skills and projects from his CV below. Never invent clients, years or tools he doesn't have. If the work is outside his CV (for example pure graphic design), be honest and lead with the closest real skills.
+- Then a short numbered plan (3 steps) of how he would do the work, and a realistic timeline.
+- If it is teaching or training, say how he would structure the lessons and what the learner will be able to do.
+- End with one smart question about the project and the sign-off "Best regards,\nSunil".
+- Don't state a price unless the budget is given; if it is (${r.p || "not given"}), you may say he can work within it.
+
+POSTING: ${r.t}${r.c ? " · " + r.c : ""}
+BUDGET: ${r.p || "not given"}
+BRIEF: ${brief.slice(0, 6000) || "(only the title is known)"}
+
+SUNIL'S CV:
+${cv.slice(0, 9000)}`;
+    try {
+      const { text } = await sample(prompt, { signal: my.signal, cache: false, modelTier: "default", onText: ({ text }) => renderMd(out, text) });
+      if (my !== pCtl) return;
+      renderMd(out, text); out.dataset.text = text.trim(); $("pr-copy").hidden = false; $("pr-go").textContent = "Write again";
+      if (db) { await saveToTracker(r, { coverLetter: text.trim() }).catch(() => {}); $("pr-msg").textContent = "Saved to your tracker. Check it, then paste it into your bid on the site yourself."; }
+    } catch (e) {
+      if (e.code === "cancelled") return;
+      out.replaceChildren();
+      $("pr-msg").textContent = e.code === "not_granted" ? "Add your free Gemini AI key in My CV › App connections, then try again."
+        : e.code === "quota" ? "Google's free AI limit is reached for now. Try again in a minute." : "Couldn't write it (" + e.code + "). Try again.";
+    } finally { if (my === pCtl) $("pr-go").disabled = false; }
+  }
+  pBg.querySelector("#pr-go").onclick = writeProposal;
+  pBg.querySelector("#pr-copy").onclick = async () => {
+    try { await navigator.clipboard.writeText($("pr-out").dataset.text || ""); $("pr-msg").textContent = "Copied. Paste it into your bid on the site."; }
+    catch (e) { $("pr-msg").textContent = "Couldn't copy. Press and hold the text to copy it."; }
+  };
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !pBg.hidden) pClose(); });
 
   function render() {
     $("bd-jobs").setAttribute("aria-pressed", String(mode === "jobs")); $("bd-free").setAttribute("aria-pressed", String(mode === "free"));
