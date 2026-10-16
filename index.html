@@ -848,7 +848,7 @@ $("cvSave").onclick=async()=>{
       if (jobapp.settings().geminiKey) {
         msg.textContent = "Testing AI…";
         try { await jobapp.sample("Reply with the single word OK."); out.push("AI works"); }
-        catch (e) { out.push(e.code === "not_granted" ? "AI key not accepted" : e.code === "rate_limited" ? "AI works (busy, try later)" : "AI test failed (" + e.code + ")"); }
+        catch (e) { out.push(e.code === "not_granted" ? "AI key not accepted" : e.code === "rate_limited" ? "Google's AI is busy right now. Try again in a minute" : "AI test failed (" + e.code + ")"); }
       }
       msg.textContent = out.join(" · ") || "Saved";
       const cur = jobapp.settings(); if (cur.githubToken && cur.geminiKey) $("setupHint")?.remove();

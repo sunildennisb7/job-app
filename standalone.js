@@ -180,17 +180,18 @@
     return input.map(t => ({ role: t.role === "assistant" ? "model" : "user", parts: [{ text: String(t.content) }] }));
   }
   /* Google retires model names over time. If ours is gone, ask Google which Flash models this key can use. */
-  async function pickModel(key) {
+  async function pickModel(key, avoid) {
     const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key } });
     if (!res.ok) return null;
     const names = ((await res.json()).models || [])
       .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
       .map(m => m.name.replace(/^models\//, ""))
       .filter(n => /flash/.test(n) && !/lite|image|tts|audio|live|embed|preview|exp/.test(n));
-    if (names.includes("gemini-flash-latest")) return "gemini-flash-latest";
+    const pool = names.filter(n => n !== avoid);
+    if (pool.includes("gemini-flash-latest")) return "gemini-flash-latest";
     const ver = n => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]);
-    names.sort((a, b) => ver(b) - ver(a) || a.length - b.length);
-    return names[0] || null;
+    pool.sort((a, b) => ver(b) - ver(a) || a.length - b.length);
+    return pool[0] || null;
   }
 
   async function gemini(input, opts = {}, json = false, retried = false) {
@@ -214,6 +215,17 @@
       let msg = ""; try { msg = (await res.json()).error.message || ""; } catch (e) {}
       throw err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg);
     }
+    // Google's free tier is sometimes overloaded: wait and try again, then try another Flash model.
+    if ((res.status === 503 || res.status === 500) && (opts._busy || 0) < 3 && !(opts.signal && opts.signal.aborted)) {
+      const n = (opts._busy || 0) + 1;
+      if (n === 3) {
+        const alt = await pickModel(s.geminiKey, s.model).catch(() => null);
+        if (alt) { saveSettings({ model: alt }); window.dispatchEvent(new CustomEvent("jobapp-model", { detail: alt })); }
+      }
+      await new Promise(r => setTimeout(r, 1500 * n));
+      return gemini(input, { ...opts, _busy: n }, json, retried);
+    }
+    if (res.status === 503 || res.status === 500) throw err("rate_limited", "Google's AI is busy");
     if (res.status === 404 && !retried) {
       const model = await pickModel(s.geminiKey).catch(() => null);
       if (model && model !== s.model) {
