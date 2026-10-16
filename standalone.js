@@ -211,9 +211,20 @@
       throw err("offline", "No connection");
     }
     const googleSays = async () => { try { return ((await res.clone().json()).error.message || "").slice(0, 300); } catch (e) { return ""; } };
-    // 429 is a quota limit on this key, not a busy server. Each model has its own quota, so try one other Flash model.
+    // 429 is a quota limit on this key, not a busy server. The free tier allows only a few requests a minute:
+    // when Google says "retry in Ns", wait that long once. Otherwise (daily limit) try one other Flash model.
     if (res.status === 429) {
-      const msg = await googleSays();
+      let body = {}; try { body = await res.clone().json(); } catch (e) {}
+      const msg = ((body.error && body.error.message) || "").slice(0, 300);
+      const info = ((body.error && body.error.details) || []).find(d => /RetryInfo/.test(d["@type"] || ""));
+      const m = (info && /([\d.]+)s/.exec(info.retryDelay || "")) || /retry in ([\d.]+)s/i.exec(msg);
+      const wait = m ? Math.ceil(parseFloat(m[1])) : null;
+      const daily = /per ?day|PerDay/i.test(msg);
+      if (!daily && wait != null && wait <= 60 && !opts._waited && !(opts.signal && opts.signal.aborted)) {
+        if (typeof opts.onWait === "function") opts.onWait(wait);
+        await new Promise(r => setTimeout(r, (wait + 1) * 1000));
+        return gemini(input, { ...opts, _waited: true }, json, retried);
+      }
       if (!opts._quota) {
         const alt = await pickModel(s.geminiKey, s.model).catch(() => null);
         if (alt && alt !== s.model) {
@@ -221,7 +232,7 @@
           return gemini(input, { ...opts, _quota: true }, json, retried);
         }
       }
-      const e = err("quota", msg); e.status = 429; throw e;
+      const e = err("quota", msg); e.status = 429; e.daily = daily; throw e;
     }
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       const msg = await googleSays();

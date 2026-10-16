@@ -1168,20 +1168,22 @@ Use an action only when he asks to open, show or go to something.`;
     history = history.slice(-12);
     busy?.abort(); busy = new AbortController(); const my = busy;
     setState("think", "Thinking…");
-    let reply = "", action = null;
+    let reply = "", action = null, failReason = "";
     try {
       const turns = [{ role: "user", content: RULES + "\n\n" + context() + "\n\nReady?" }, { role: "assistant", content: '{"say":"Ready.","action":null}' }, ...history];
-      const r = await sample.json(turns, { signal: my.signal, cache: false, modelTier: "default" });
+      const r = await sample.json(turns, { signal: my.signal, cache: false, modelTier: "default", onWait: n => setState("think", `Google's free plan allows a few questions a minute. Waiting ${n} seconds…`) });
       reply = (r && r.say) || "Sorry, I lost my train of thought. Try again?"; action = r && r.action;
     } catch (e) {
       if (e.code === "cancelled") return;
+      failReason = e.message && e.message !== e.code ? e.message : "";
       reply = e.code === "not_granted" ? "I need your free Gemini key first. Add it in My CV, App connections."
-        : e.code === "quota" ? "I've used up the free AI allowance for now. Try again a bit later."
+        : e.code === "quota" ? (e.daily ? "We've used today's free AI allowance. It resets overnight, Pacific time." : "Google's free plan is limiting me right now. Try again in a minute.")
         : e.code === "offline" ? "I'm offline at the moment." : "Google's AI is busy. Give it a minute and ask again.";
     }
     if (my !== busy) return;
     history.push({ role: "assistant", content: JSON.stringify({ say: reply, action: null }) });
-    bubble("assistant", reply);
+    const b = bubble("assistant", reply);
+    if (failReason) b.append(el("p", "note", "Google says: " + failReason));
     doAction(action);
     await speak(reply);
     setState("", "");
