@@ -11,7 +11,7 @@
   };
   const SETTINGS_KEY = "jobapp-settings";
   const DB_KEY = "jobapp-db";
-  const DEFAULTS = { repo: "sunildennisb7/job-assistant", githubToken: "", geminiKey: "", model: "gemini-2.5-flash" };
+  const DEFAULTS = { repo: "sunildennisb7/job-assistant", githubToken: "", geminiKey: "", model: "gemini-flash-latest" };
 
   function settings() {
     try { return { ...DEFAULTS, ...JSON.parse(LS.get(SETTINGS_KEY) || "{}") }; } catch (e) { return { ...DEFAULTS }; }
@@ -179,7 +179,21 @@
     if (typeof input === "string") return [{ role: "user", parts: [{ text: input }] }];
     return input.map(t => ({ role: t.role === "assistant" ? "model" : "user", parts: [{ text: String(t.content) }] }));
   }
-  async function gemini(input, opts = {}, json = false) {
+  /* Google retires model names over time. If ours is gone, ask Google which Flash models this key can use. */
+  async function pickModel(key) {
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key } });
+    if (!res.ok) return null;
+    const names = ((await res.json()).models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map(m => m.name.replace(/^models\//, ""))
+      .filter(n => /flash/.test(n) && !/lite|image|tts|audio|live|embed|preview|exp/.test(n));
+    if (names.includes("gemini-flash-latest")) return "gemini-flash-latest";
+    const ver = n => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]);
+    names.sort((a, b) => ver(b) - ver(a) || a.length - b.length);
+    return names[0] || null;
+  }
+
+  async function gemini(input, opts = {}, json = false, retried = false) {
     const s = settings();
     if (!s.geminiKey) throw err("not_granted", "Add your free Gemini key in My CV › App connections");
     const body = {
@@ -199,6 +213,14 @@
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       let msg = ""; try { msg = (await res.json()).error.message || ""; } catch (e) {}
       throw err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg);
+    }
+    if (res.status === 404 && !retried) {
+      const model = await pickModel(s.geminiKey).catch(() => null);
+      if (model && model !== s.model) {
+        saveSettings({ model });
+        window.dispatchEvent(new CustomEvent("jobapp-model", { detail: model }));
+        return gemini(input, opts, json, true);
+      }
     }
     if (!res.ok) throw err("ai_" + res.status);
     let text = "", finish = "";

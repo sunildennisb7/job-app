@@ -832,7 +832,7 @@ $("cvSave").onclick=async()=>{
     <label>GitHub token (syncs your jobs and gets new alerts)<input id="c-gh" type="password" autocomplete="off" placeholder="github_pat_…"></label>
     <label>Private repo<input id="c-repo" autocomplete="off" placeholder="sunildennisb7/job-assistant"></label>
     <label>Gemini API key (free, for CVs, cover letters and practice)<input id="c-ai" type="password" autocomplete="off" placeholder="AIza…"></label>
-    <label>AI model<input id="c-model" autocomplete="off" placeholder="gemini-2.5-flash"></label>
+    <label>AI model<input id="c-model" autocomplete="off" placeholder="gemini-flash-latest"></label>
     <div class="actions"><span class="status" id="c-msg"></span><button class="btn primary" id="c-save" type="button">Save and test</button></div>
     <p class="note" id="c-sync"></p>`;
   const cvView = $("view-cv");
@@ -841,7 +841,7 @@ $("cvSave").onclick=async()=>{
   $("c-save").onclick = async () => {
     const btn = $("c-save"); btn.disabled = true; const msg = $("c-msg");
     jobapp.saveSettings({ githubToken: $("c-gh").value.trim(), repo: $("c-repo").value.trim() || "sunildennisb7/job-assistant",
-                          geminiKey: $("c-ai").value.trim(), model: $("c-model").value.trim() || "gemini-2.5-flash" });
+                          geminiKey: $("c-ai").value.trim(), model: $("c-model").value.trim() || "gemini-flash-latest" });
     const out = [];
     try {
       if (jobapp.gh.ready()) { await jobapp.syncNow(); out.push(jobapp.syncState.status === "synced" ? "GitHub works" : "GitHub: " + jobapp.syncState.message); }
@@ -857,6 +857,7 @@ $("cvSave").onclick=async()=>{
   };
   const showSync = d => { $("c-sync").textContent = d.message + (d.at && d.status === "synced" ? " at " + d.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : ""); };
   window.addEventListener("jobapp-sync", e => showSync(e.detail));
+  window.addEventListener("jobapp-model", e => { $("c-model").value = e.detail; });
   showSync(jobapp.syncState);
 })();
 
