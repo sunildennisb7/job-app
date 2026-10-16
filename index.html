@@ -1,0 +1,1028 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<title>Job Assistant</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2747b8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Jobs">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one phone-width column; tabs (Jobs / This week / My CV); job details and AI tools open in a bottom sheet. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#18202e; --muted:#5d6779; --line:#dde2ea;
+  --accent:#2747b8; --accent-ink:#ffffff; --accent-soft:#e6ebfa;
+  --s-new:#0b7f8a; --s-saved:#6b7385; --s-applied:#2747b8; --s-interview:#a35a00; --s-offer:#1d7a45; --s-rejected:#b0303a;
+  --now:#1d7a45; --later:#6a4bb5;
+  --f-display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Instrument Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#10141c; --surface:#181e29; --ink:#e8ecf3; --muted:#9aa4b6; --line:#2a3242;
+  --accent:#8aa3ff; --accent-ink:#0e1424; --accent-soft:#222c48;
+  --s-new:#4fd1d9; --s-saved:#9aa4b6; --s-applied:#8aa3ff; --s-interview:#f0a94a; --s-offer:#5fcf8c; --s-rejected:#ff7b84;
+  --now:#5fcf8c; --later:#b49cff; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10141c; --surface:#181e29; --ink:#e8ecf3; --muted:#9aa4b6; --line:#2a3242;
+  --accent:#8aa3ff; --accent-ink:#0e1424; --accent-soft:#222c48;
+  --s-new:#4fd1d9; --s-saved:#9aa4b6; --s-applied:#8aa3ff; --s-interview:#f0a94a; --s-offer:#5fcf8c; --s-rejected:#ff7b84;
+  --now:#5fcf8c; --later:#b49cff; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45}
+.wrap{max-width:720px;margin:0 auto;padding-block:20px 96px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:18px}
+h1{font-family:var(--f-display);font-size:28px;line-height:1.1;margin:0;text-wrap:balance}
+h2{font-family:var(--f-display);font-size:20px;margin:0;text-wrap:balance}
+.sub{color:var(--muted);font-size:13px;margin:4px 0 0}
+.btn{font:600 15px var(--f-body);border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:10px 14px;cursor:pointer}
+.btn.sm{font-size:13px;padding:7px 11px}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--s-rejected)}
+.btn:disabled{opacity:.55;cursor:default}
+.btn:focus-visible,.chip:focus-visible,.card:focus-visible,.tab:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px;gap:4px}
+.tab{font:600 14px var(--f-body);border:0;background:transparent;color:var(--muted);border-radius:9px;padding:9px 6px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--accent-soft);color:var(--ink)}
+.pipe{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+@media (max-width:520px){.pipe{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.alertbar{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.ats{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.ats span{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 8px}.ats .ok{color:var(--s-offer)}.ats .miss{color:var(--s-interview)}
+.dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 8px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.stage b{font:600 22px var(--f-mono);font-variant-numeric:tabular-nums}
+.stage span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stage i{display:block;height:3px;border-radius:2px;margin-bottom:6px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.chip{flex:none;font:500 13px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:6px 12px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.list{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0}
+.top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.role{font-weight:600;font-size:16px;min-width:0;overflow-wrap:anywhere}
+.co{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.pill{flex:none;font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.06em;color:var(--c);border:1px solid var(--c);border-radius:999px;padding:2px 8px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted)}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.visa{font-weight:600}
+.visa.now{color:var(--now)} .visa.later{color:var(--later)}
+.next{font-size:13px;background:var(--accent-soft);border-radius:8px;padding:6px 10px}
+.next.due{outline:1px solid var(--s-interview)}
+.docs{display:flex;gap:6px;flex-wrap:wrap}
+.doc-tag{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.empty{background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:24px;text-align:center;color:var(--muted)}
+.note{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.panel h3{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.big{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.big div{display:flex;flex-direction:column}
+.big b{font:600 26px var(--f-mono);font-variant-numeric:tabular-nums}
+.big span{font-size:12px;color:var(--muted)}
+.rowline{display:flex;justify-content:space-between;gap:10px;font-size:14px;padding:6px 0;border-top:1px solid var(--line)}
+.rowline:first-of-type{border-top:0}
+.rowline span:first-child{min-width:0;overflow-wrap:anywhere}
+.fab{position:fixed;right:max(16px,calc(env(safe-area-inset-right,0px) + 16px));bottom:calc(env(safe-area-inset-bottom,0px) + 16px);box-shadow:0 6px 20px rgba(0,0,0,.18);border-radius:999px;padding:14px 20px}
+.sheet-bg{position:fixed;inset:0;background:rgba(10,14,22,.45);display:flex;align-items:flex-end;justify-content:center;z-index:5}
+.sheet{background:var(--surface);width:100%;max-width:720px;max-height:94%;overflow-y:auto;border-radius:16px 16px 0 0;padding-block:18px calc(env(safe-area-inset-bottom,0px) + 18px);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:12px}
+.sheet-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--muted);min-width:0}
+input,select,textarea{font:16px var(--f-body);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%;min-width:0}
+textarea{min-height:70px;resize:vertical}
+textarea.tall{min-height:180px}
+textarea.cv{min-height:60vh;font:13px/1.5 var(--f-mono)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between}
+.actions div{display:flex;gap:8px;flex-wrap:wrap}
+.tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.tools .btn{padding:10px 6px;font-size:13px}
+.confirm{font-size:13px;color:var(--s-rejected);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.status{font-size:13px;color:var(--muted)}
+.out{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--bg);font-size:14px;overflow-wrap:anywhere;min-width:0}
+.out h1,.out h2,.out h3{font-family:var(--f-body);font-size:15px;margin:12px 0 4px}
+.out h1{font-size:18px;margin-top:0}
+.out p{margin:6px 0}
+.out ul{margin:4px 0;padding-left:20px}
+.out a{color:var(--accent)}
+.out-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.out-head b{font-size:14px}
+.chat{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--bg)}
+.bubble{border-radius:10px;padding:8px 12px;max-width:92%;font-size:14px;overflow-wrap:anywhere;min-width:0}
+.bubble.them{background:var(--surface);border:1px solid var(--line);align-self:flex-start}
+.bubble.me{background:var(--accent-soft);align-self:flex-end;white-space:pre-wrap}
+.bubble p{margin:4px 0}
+.chat-input{display:flex;gap:8px;align-items:flex-end}
+.chat-input textarea{min-height:60px}
+.invite{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--s-interview);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.invite.done{border-left-color:var(--s-offer);opacity:.85}
+.invite .when{font:600 14px var(--f-mono);font-variant-numeric:tabular-nums}
+.invite .btns{display:flex;gap:6px;flex-wrap:wrap}
+details.saved{border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+details.saved summary{cursor:pointer;font-weight:600;font-size:14px}
+@media (max-width:420px){.stage b{font-size:18px}.row{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:no-preference){.card{transition:transform .12s}.card:active{transform:scale(.99)}}
+[hidden]{display:none!important}
+html,body{margin:0}
+.wrap{padding-top:max(20px,env(safe-area-inset-top,0px))}
+#connPanel label{margin-bottom:8px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div>
+    <h1>Job tracker</h1>
+    <p class="sub">Every role you save or apply to, with a tailored CV, cover letter and interview prep for each, and interview invites from your inbox.</p>
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-jobs" type="button">Jobs</button>
+    <button class="tab" role="tab" id="tab-inbox" type="button">Inbox</button>
+    <button class="tab" role="tab" id="tab-week" type="button">This week</button>
+    <button class="tab" role="tab" id="tab-cv" type="button">My CV</button>
+  </div>
+  <p class="status" id="msg" hidden></p>
+
+  <section id="view-jobs" style="display:flex;flex-direction:column;gap:14px">
+    <div class="alertbar"><span class="status" id="alertMsg"></span><button class="btn sm" id="alertScan" type="button">Check job alerts</button></div>
+    <div class="pipe" id="pipe"></div>
+    <div class="chips" id="chips" role="toolbar" aria-label="Filter by stage"></div>
+    <div class="list" id="list"><div class="empty">Loading your jobs…</div></div>
+  </section>
+
+  <section id="view-inbox" hidden style="flex-direction:column;gap:12px">
+    <div class="panel">
+      <h3>Interview invites</h3>
+      <p class="note">Your alert bot checks your Gmail every 2 hours for interview and assessment emails. Tap Check inbox to sort them. Nothing is sent for you: replies open in your mail app for you to check and send.</p>
+      <div class="actions"><span class="status" id="inboxMsg"></span><button class="btn primary" id="inboxScan" type="button">Check inbox</button></div>
+    </div>
+    <div class="list" id="inboxList"></div>
+  </section>
+
+  <section id="view-week" hidden style="flex-direction:column;gap:14px"></section>
+
+  <section id="view-cv" hidden style="flex-direction:column;gap:12px">
+    <div class="panel">
+      <h3>Master CV</h3>
+      <p class="note">Every tailored CV, cover letter and prep pack is written only from this text. Keep it complete and true; edits save for next time.</p>
+      <textarea class="cv" id="cvText" placeholder="Loading your CV…"></textarea>
+      <div class="actions"><span class="status" id="cvMsg"></span><button class="btn primary" id="cvSave" type="button">Save CV</button></div>
+    </div>
+  </section>
+</div>
+
+<button class="btn primary fab" id="addBtn" type="button">+ Add job</button>
+
+<!-- Job details + tools -->
+<div class="sheet-bg" id="detailBg" hidden>
+  <div class="sheet" id="detail">
+    <div class="sheet-head">
+      <div style="min-width:0"><h2 id="d-title"></h2><div class="co" id="d-co"></div></div>
+      <button class="btn sm" id="d-close" type="button">Close</button>
+    </div>
+    <div class="meta" id="d-meta"></div>
+    <div class="row">
+      <label>Stage<select id="d-status"></select></label>
+      <label>Next step date<input id="d-nextDate" type="date"></label>
+    </div>
+    <div class="tools">
+      <button class="btn" type="button" data-kind="cv">Tailor CV</button>
+      <button class="btn" type="button" data-kind="letter">Tailor cover letter</button>
+      <button class="btn" type="button" data-kind="prep">Interview prep</button>
+      <button class="btn" type="button" id="d-practice">Practice interview</button>
+    </div>
+    <div id="d-chat" hidden style="display:flex;flex-direction:column;gap:8px">
+      <div class="out-head"><b>Practice interview</b><button class="btn sm" id="chatEnd" type="button">End practice</button></div>
+      <div class="chat" id="chatLog"></div>
+      <div class="chat-input"><textarea id="chatIn" placeholder="Type your answer as you'd say it"></textarea><button class="btn primary" id="chatSend" type="button">Send</button></div>
+    </div>
+    <p class="note" id="d-newNote" hidden>New from your job alerts. Tap Tailor CV or Tailor cover letter, and download them as Word or PDF when they're ready.</p>
+    <p class="note" id="d-aiNote" hidden></p>
+    <div id="d-live" hidden>
+      <div class="out-head"><b id="d-liveTitle"></b><button class="btn sm" id="d-stop" type="button">Stop</button></div>
+      <div class="out" id="d-liveOut"></div>
+    </div>
+    <div id="d-saved" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="d-edit">Edit details</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add / edit form -->
+<div class="sheet-bg" id="sheetBg" hidden>
+  <form class="sheet" id="form" novalidate>
+    <h2 id="formTitle">Add job</h2>
+    <label>Role<input id="f-title" required placeholder="Python Developer"></label>
+    <div class="row">
+      <label>Company<input id="f-company" placeholder="Company name"></label>
+      <label>Location<input id="f-location" placeholder="Sheffield, remote…"></label>
+    </div>
+    <label>Job link<input id="f-url" type="url" inputmode="url" placeholder="https://"></label>
+    <label>Job description<textarea class="tall" id="f-description" placeholder="Paste the full job advert here (or a Telegram alert). The CV, cover letter and prep pack are tailored to it."></textarea></label>
+    <div class="actions"><span class="status" id="fillMsg"></span><button class="btn sm" type="button" id="fillBtn">Fill details from advert</button></div>
+    <div class="row">
+      <label>Stage<select id="f-status"></select></label>
+      <label>Visa fit<select id="f-visa">
+        <option value="now">Fits student visa now</option>
+        <option value="later">For Jan 2027 (Graduate visa)</option>
+      </select></label>
+    </div>
+    <div class="row">
+      <label>Pay<input id="f-pay" placeholder="£35–45k"></label>
+      <label>Date applied<input id="f-applied" type="date"></label>
+    </div>
+    <div class="row">
+      <label>Next step<input id="f-next" placeholder="Follow up, interview…"></label>
+      <label>Next step date<input id="f-nextDate" type="date"></label>
+    </div>
+    <label>Notes<textarea id="f-notes" placeholder="Contact name, salary talk, how it went"></textarea></label>
+    <div class="actions">
+      <div><button class="btn danger" type="button" id="delBtn" hidden>Delete</button></div>
+      <div><button class="btn" type="button" id="cancelBtn">Cancel</button><button class="btn primary" type="submit" id="saveBtn">Save</button></div>
+    </div>
+    <div class="confirm" id="confirm" hidden>Delete this job for good?
+      <button class="btn danger" type="button" id="confirmYes">Yes, delete</button>
+      <button class="btn" type="button" id="confirmNo">Keep it</button>
+    </div>
+  </form>
+</div>
+
+<script src="standalone.js"></script>
+<script>
+const STAGES=[
+  {k:"new",label:"New",c:"--s-new"},
+  {k:"saved",label:"Saved",c:"--s-saved"},
+  {k:"applied",label:"Applied",c:"--s-applied"},
+  {k:"interview",label:"Interview",c:"--s-interview"},
+  {k:"offer",label:"Offer",c:"--s-offer"},
+  {k:"rejected",label:"Closed",c:"--s-rejected"}];
+const byK=Object.fromEntries(STAGES.map(s=>[s.k,s]));
+const KINDS={
+  cv:{field:"cvTailored",label:"Tailored CV",file:"Sunil Dennis CV"},
+  letter:{field:"coverLetter",label:"Cover letter",file:"Sunil Dennis Cover Letter"},
+  prep:{field:"prepPack",label:"Interview prep",file:"Interview prep"}};
+let openKind=null;
+let invites=[], mcp=null;
+let jobs=[], filter="active", tab="jobs", db=null, sample=null, downloads=null, editing=null, openId=null, cv="", cvVersionLoaded=false, ctl=null;
+const $=id=>document.getElementById(id);
+const store=(k,v)=>{try{v===undefined?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
+const load=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+
+function fmtDate(d){if(!d)return"";const x=new Date(d+"T00:00:00");return isNaN(x)?d:x.toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
+function iso(d){return d.toISOString().slice(0,10)}
+function today(){return iso(new Date())}
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+function showMsg(t){const m=$("msg");m.textContent=t||"";m.hidden=!t}
+
+/* --- tiny Markdown renderer (headings, bullets, bold, italics, links) using DOM nodes only --- */
+function inline(parent,text){
+  const re=/(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s)]+)/g;let last=0,m;
+  while((m=re.exec(text))){parent.append(text.slice(last,m.index));const t=m[0];
+    if(t.startsWith("**"))parent.append(el("strong",null,t.slice(2,-2)));
+    else if(t.startsWith("*"))parent.append(el("em",null,t.slice(1,-1)));
+    else{let label=t,href=t;const mm=t.match(/^\[([^\]]+)\]\((.+)\)$/);if(mm){label=mm[1];href=mm[2]}const a=el("a",null,label);a.href=href;a.target="_blank";a.rel="noopener";parent.append(a)}
+    last=m.index+t.length}
+  parent.append(text.slice(last))}
+function renderMd(target,md){
+  target.replaceChildren();let ul=null;
+  for(const raw of md.split("\n")){const line=raw.trimEnd();
+    const h=line.match(/^(#{1,3})\s+(.*)/),li=line.match(/^\s*[-*•]\s+(.*)/);
+    if(li){if(!ul){ul=el("ul");target.append(ul)}const x=el("li");inline(x,li[1]);ul.append(x);continue}
+    ul=null;if(!line.trim())continue;
+    if(h){const x=el("h"+h[1].length);inline(x,h[2]);target.append(x)}else{const p=el("p");inline(p,line);target.append(p)}}
+}
+/* --- Word (.docx) and PDF files built in the page: single column, standard headings, real text, so ATS can read them --- */
+function mdBlocks(md){
+  const runs=t=>{const out=[];const re=/\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\([^)]+\)/g;let last=0,m;
+    while((m=re.exec(t))){if(m.index>last)out.push({t:t.slice(last,m.index)});out.push(m[1]!=null?{t:m[1],b:true}:{t:m[2]??m[3]});last=m.index+m[0].length}
+    if(last<t.length)out.push({t:t.slice(last)});return out};
+  const blocks=[];let seenH2=false;
+  for(const raw of md.split("\n")){const line=raw.trim();if(!line||/^(-{3,}|\*{3,}|_{3,})$/.test(line))continue;
+    const h=line.match(/^(#{1,3})\s+(.*)/),li=line.match(/^[-*•]\s+(.*)/);
+    if(h){const type="h"+h[1].length;if(type==="h2")seenH2=true;blocks.push({type,runs:runs(h[2].replace(/\*\*/g,""))})}
+    else if(li)blocks.push({type:"li",runs:runs(li[1])});
+    else blocks.push({type:!seenH2&&blocks.some(b=>b.type==="h1")?"head":"p",runs:runs(line)})}
+  return blocks}
+const loaded={};
+function loadScript(src){return loaded[src]??=new Promise((ok,bad)=>{const t=document.createElement("script");t.src=src;t.onload=ok;t.onerror=()=>{delete loaded[src];bad(new Error("load"))};document.head.append(t)})}
+const pdfSafe=t=>t.replace(/[‘’‚′]/g,"'").replace(/[“”„″]/g,'"').replace(/[–—−‐‑]/g,"-").replace(/…/g,"...").replace(/[•·▪●]/g,"-").replace(/\u00a0/g," ").replace(/[^\x00-\xff]/g,"");
+async function buildPdf(md,title){
+  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+  const doc=new window.jspdf.jsPDF({unit:"pt",format:"a4"});doc.setProperties({title,author:"Sunil Dennis",creator:"Job tracker"});
+  const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=51,maxW=W-2*M;let y=M;
+  const S={h1:{size:17,bold:true,center:true,before:0,after:3},head:{size:9.5,center:true,before:0,after:1},h2:{size:11,bold:true,caps:true,before:9,after:4,rule:true},h3:{size:10,bold:true,before:5,after:1},p:{size:10,before:0,after:3},li:{size:10,before:0,after:1.5,indent:12}};
+  for(const b of mdBlocks(md)){const st=S[b.type];const lh=st.size*1.25;
+    const words=[];for(const r of b.runs){const t=pdfSafe(st.caps?r.t.toUpperCase():r.t);for(const w of t.split(/(\s+)/))if(w)words.push({t:w,b:st.bold||r.b})}
+    const lines=[];let line=[],lw=0;const x0=M+(st.indent||0),avail=maxW-(st.indent||0);
+    for(const w of words){doc.setFont("helvetica",w.b?"bold":"normal");doc.setFontSize(st.size);const ww=doc.getTextWidth(w.t);
+      if(/^\s+$/.test(w.t)){if(line.length){line.push({...w,w:ww});lw+=ww}continue}
+      if(lw+ww>avail&&line.length){while(line.length&&/^\s+$/.test(line[line.length-1].t))lw-=line.pop().w;lines.push({items:line,w:lw});line=[];lw=0}
+      line.push({...w,w:ww});lw+=ww}
+    while(line.length&&/^\s+$/.test(line[line.length-1].t))lw-=line.pop().w;if(line.length)lines.push({items:line,w:lw});
+    y+=st.before;if(st.rule&&y+lh+6>H-M){doc.addPage();y=M}
+    lines.forEach((ln,k)=>{if(y+lh>H-M){doc.addPage();y=M}
+      let x=st.center?(W-ln.w)/2:x0;
+      if(b.type==="li"&&k===0){doc.circle(M+3.5,y+lh*0.5,1.3,"F")}
+      for(const it of ln.items){doc.setFont("helvetica",it.b?"bold":"normal");doc.setFontSize(st.size);doc.text(it.t,x,y+st.size);x+=it.w}
+      y+=lh});
+    if(st.rule){doc.setDrawColor(150);doc.setLineWidth(0.6);doc.line(M,y+1,W-M,y+1);y+=2}
+    y+=st.after}
+  return {blob:doc.output("blob"),pages:doc.getNumberOfPages()}}
+const xmlEsc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+async function buildDocx(md,title){
+  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
+  const W='xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const run=(r,extra="")=>`<w:r>${r.b||extra?`<w:rPr>${r.b?"<w:b/>":""}${extra}</w:rPr>`:""}<w:t xml:space="preserve">${xmlEsc(r.t)}</w:t></w:r>`;
+  const body=mdBlocks(md).map(b=>{
+    if(b.type==="h1")return `<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>${b.runs.map(r=>run(r)).join("")}</w:p>`;
+    if(b.type==="head")return `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="20"/></w:pPr>${b.runs.map(r=>run(r,'<w:sz w:val="19"/>')).join("")}</w:p>`;
+    if(b.type==="h2")return `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>${b.runs.map(r=>run(r)).join("")}</w:p>`;
+    if(b.type==="h3")return `<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr>${b.runs.map(r=>run(r)).join("")}</w:p>`;
+    if(b.type==="li")return `<w:p><w:pPr><w:pStyle w:val="ListBullet"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>${b.runs.map(r=>run(r)).join("")}</w:p>`;
+    return `<w:p>${b.runs.map(r=>run(r)).join("")}</w:p>`}).join("");
+  const font='<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri" w:eastAsia="Calibri"/>';
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="21"/><w:szCs w:val="21"/><w:lang w:val="en-GB"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="60" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
+   +`<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>`
+   +`<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/><w:spacing w:after="40"/></w:pPr><w:rPr><w:b/><w:sz w:val="34"/></w:rPr></w:style>`
+   +`<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="180" w:after="80"/><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="999999"/></w:pBdr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:caps/><w:sz w:val="22"/></w:rPr></w:style>`
+   +`<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="100" w:after="20"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>`
+   +`<w:style w:type="paragraph" w:styleId="ListBullet"><w:name w:val="List Bullet"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="30"/><w:ind w:left="284" w:hanging="227"/></w:pPr></w:style></w:styles>`;
+  const numbering=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${W}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="284" w:hanging="227"/></w:pPr><w:rPr>${font}</w:rPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
+  const document_=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1021" w:right="1021" w:bottom="1021" w:left="1021" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const z=new window.JSZip();
+  z.file("[Content_Types].xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`);
+  z.file("_rels/.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`);
+  z.file("word/_rels/document.xml.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>`);
+  z.file("docProps/core.xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${xmlEsc(title)}</dc:title><dc:creator>Sunil Dennis</dc:creator></cp:coreProperties>`);
+  z.file("word/document.xml",document_);z.file("word/styles.xml",styles);z.file("word/numbering.xml",numbering);
+  return z.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"})}
+
+/* --- Jobs view --- */
+function renderPipe(){
+  const p=$("pipe");p.replaceChildren();
+  for(const s of STAGES){const d=el("div","stage");const bar=el("i");bar.style.background=`var(${s.c})`;
+    d.append(bar,el("b",null,String(jobs.filter(j=>j.status===s.k).length)),el("span",null,s.label));p.append(d)}
+}
+function renderChips(){
+  const c=$("chips");c.replaceChildren();
+  const opts=[["active","Active"],["all","All"],...STAGES.map(s=>[s.k,s.label]),["now","Visa: now"],["later","Visa: 2027"]];
+  for(const [k,l] of opts){const b=el("button","chip",l);b.type="button";b.setAttribute("aria-pressed",String(filter===k));b.onclick=()=>{filter=k;store("jt-filter",k);renderJobs()};c.append(b)}
+}
+function visible(){
+  let v=jobs;
+  if(filter==="active")v=v.filter(j=>j.status!=="rejected");
+  else if(filter==="now"||filter==="later")v=v.filter(j=>j.visa===filter);
+  else if(filter!=="all")v=v.filter(j=>j.status===filter);
+  const order={interview:0,new:1,offer:2,applied:3,saved:4,rejected:5};
+  return [...v].sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)||(a.nextDate||"9").localeCompare(b.nextDate||"9")||(b.updated||"").localeCompare(a.updated||""));
+}
+function cardMeta(j){
+  const meta=el("div","meta");
+  meta.append(el("span","visa "+(j.visa==="later"?"later":"now"),j.visa==="later"?"📅 Jan 2027":"✅ Visa OK now"));
+  if(j.pay)meta.append(el("span",null,j.pay));
+  if(j.applied)meta.append(el("span","mono","Applied "+fmtDate(j.applied)));
+  if(j.url){const a=el("a",null,"Open job");a.href=j.url;a.target="_blank";a.rel="noopener";a.style.color="var(--accent)";a.onclick=e=>e.stopPropagation();meta.append(a)}
+  return meta}
+function renderList(){
+  const l=$("list");l.replaceChildren();const v=visible();
+  if(!v.length){l.append(el("div","empty",jobs.length?"No jobs at this stage.":"No jobs yet. Tap “+ Add job” to log the first one."));return}
+  for(const j of v){
+    const s=byK[j.status]||byK.saved;
+    const card=el("div","card");card.tabIndex=0;card.setAttribute("role","button");card.style.setProperty("--c",`var(${s.c})`);
+    const top=el("div","top");const left=el("div");left.style.minWidth="0";
+    left.append(el("div","role",j.title||"Untitled role"),el("div","co",[j.company,j.location].filter(Boolean).join(" · ")));
+    top.append(left,el("span","pill",s.label));card.append(top,cardMeta(j));
+    if(j.next||j.nextDate)card.append(el("div","next"+(j.nextDate&&j.nextDate<=today()&&j.status!=="rejected"?" due":""),(j.nextDate?fmtDate(j.nextDate)+": ":"")+(j.next||"Next step")));
+    const docs=Object.values(KINDS).filter(k=>j[k.field]);
+    if(docs.length){const d=el("div","docs");docs.forEach(k=>d.append(el("span","doc-tag",k.label+" ready")));card.append(d)}
+    card.onclick=()=>openDetail(j.id);card.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openDetail(j.id)}};
+    l.append(card)}
+}
+function renderJobs(){renderPipe();renderChips();renderList()}
+
+/* --- This week view --- */
+function renderWeek(){
+  const v=$("view-week");v.replaceChildren();
+  const t=today(),weekAgo=iso(new Date(Date.now()-7*864e5)),weekAhead=iso(new Date(Date.now()+7*864e5));
+  const appliedWeek=jobs.filter(j=>j.applied&&j.applied>=weekAgo);
+  const savedWeek=jobs.filter(j=>(j.created||"").slice(0,10)>=weekAgo);
+  const interviews=jobs.filter(j=>j.status==="interview");
+  const p1=el("div","panel");p1.append(el("h3",null,"Last 7 days"));
+  const big=el("div","big");
+  for(const [n,l] of [[savedWeek.length,savedWeek.length===1?"job added":"jobs added"],[appliedWeek.length,"applications"],[interviews.length,"in interview"]]){const d=el("div");d.append(el("b",null,String(n)),el("span",null,l));big.append(d)}
+  p1.append(big);
+  const goal=5;p1.append(el("p","note",appliedWeek.length>=goal?`You've hit ${goal} applications this week. Keep going.`:`${goal-appliedWeek.length} more application${goal-appliedWeek.length===1?"":"s"} to reach ${goal} this week.`));
+  v.append(p1);
+
+  const upcoming=jobs.filter(j=>j.nextDate&&j.nextDate<=weekAhead&&j.status!=="rejected").sort((a,b)=>a.nextDate.localeCompare(b.nextDate));
+  const p2=el("div","panel");p2.append(el("h3",null,"Next steps, coming 7 days"));
+  if(!upcoming.length)p2.append(el("p","note","Nothing scheduled. Set a next step date on a job to see it here."));
+  for(const j of upcoming){const r=el("div","rowline");r.style.cursor="pointer";r.onclick=()=>openDetail(j.id);
+    const a=el("span",null,`${j.next||"Next step"}: ${j.title}${j.company?", "+j.company:""}`);
+    const b=el("span","mono"+(j.nextDate<t?" ":""),j.nextDate<t?"Overdue":fmtDate(j.nextDate));if(j.nextDate<t)b.style.color="var(--s-rejected)";
+    r.append(a,b);p2.append(r)}
+  v.append(p2);
+
+  const stale=jobs.filter(j=>j.status==="applied"&&j.applied&&j.applied<=iso(new Date(Date.now()-10*864e5))&&!j.nextDate);
+  const p3=el("div","panel");p3.append(el("h3",null,"Worth a follow-up"));
+  if(!stale.length)p3.append(el("p","note","No applications waiting more than 10 days without a reply."));
+  for(const j of stale){const r=el("div","rowline");r.style.cursor="pointer";r.onclick=()=>openDetail(j.id);r.append(el("span",null,`${j.title}, ${j.company||""}`),el("span","mono","Applied "+fmtDate(j.applied)));p3.append(r)}
+  v.append(p3);
+
+  const p4=el("div","panel");p4.append(el("h3",null,"Visa mix of active jobs"));
+  const act=jobs.filter(j=>j.status!=="rejected");
+  const r1=el("div","rowline");r1.append(el("span","visa now","✅ Fit student visa now"),el("span","mono",String(act.filter(j=>j.visa!=="later").length)));
+  const r2=el("div","rowline");r2.append(el("span","visa later","📅 For Jan 2027"),el("span","mono",String(act.filter(j=>j.visa==="later").length)));
+  p4.append(r1,r2);v.append(p4);
+}
+
+function setTab(t){
+  tab=t;store("jt-tab",t);
+  for(const k of ["jobs","inbox","week","cv"]){$("tab-"+k).setAttribute("aria-selected",String(k===t));const v=$("view-"+k);v.hidden=k!==t;if(k===t)v.style.display="flex"}
+  $("addBtn").hidden=t!=="jobs"||!db;
+  if(t==="week")renderWeek();
+}
+for(const k of ["jobs","inbox","week","cv"])$("tab-"+k).onclick=()=>setTab(k);
+function render(){renderJobs();if(tab==="week")renderWeek();renderInbox();if(openId)fillDetail()}
+
+/* --- Detail sheet --- */
+$("d-status").append(...STAGES.map(s=>{const o=el("option",null,s.label);o.value=s.k;return o}));
+$("f-status").append(...STAGES.map(s=>{const o=el("option",null,s.label);o.value=s.k;return o}));
+const current=()=>jobs.find(j=>j.id===openId);
+function openDetail(id){openId=id;openKind=null;$("d-live").hidden=true;$("d-aiNote").hidden=true;fillDetail();$("detailBg").hidden=false}
+function closeDetail(){ctl?.abort();chatCtl?.abort();chat=null;$("d-chat").hidden=true;openId=null;$("detailBg").hidden=true}
+function fillDetail(){
+  const j=current();if(!j){closeDetail();return}
+  $("d-title").textContent=j.title||"Untitled role";
+  $("d-co").textContent=[j.company,j.location].filter(Boolean).join(" · ");
+  const m=$("d-meta");m.replaceChildren(...cardMeta(j).childNodes);
+  if(document.activeElement!==$("d-status"))$("d-status").value=j.status||"saved";
+  if(document.activeElement!==$("d-nextDate"))$("d-nextDate").value=j.nextDate||"";
+  $("d-newNote").hidden=j.status!=="new";
+  const saved=$("d-saved");saved.replaceChildren();
+  if(j.notes)saved.append(el("p","note","Notes: "+j.notes));
+  for(const [kind,k] of Object.entries(KINDS)){
+    if(!j[k.field])continue;
+    const d=el("details","saved");d.open=openKind===kind;d.ontoggle=()=>{if(d.open)openKind=kind};
+    const s=el("summary",null,k.label+(kind!=="prep"?" · ready to download":""));d.append(s);
+    const dl=el("div","dl");
+    for(const [fmt,label] of [["docx","Download Word"],["pdf","Download PDF"]]){
+      const b=el("button","btn"+(fmt==="docx"?" primary":""),label);b.type="button";b.disabled=!downloads;b.onclick=()=>saveFile(j,kind,fmt,b,label);dl.append(b)}
+    if(!downloads)dl.append(el("p","note","Downloads work in the Claude app."));
+    d.append(dl);
+    if(kind==="cv"&&j.atsReport)d.append(atsView(j.atsReport));
+    const head=el("div","out-head");head.style.margin="8px 0";
+    const copy=el("button","btn sm","Copy text");copy.type="button";copy.onclick=()=>copyText(j[k.field],copy);
+    const redo=el("button","btn sm","Write again");redo.type="button";redo.onclick=()=>generate(kind);
+    const btns=el("div");btns.style.cssText="display:flex;gap:6px;flex-wrap:wrap";btns.append(copy,redo);head.append(btns);
+    const out=el("div","out");renderMd(out,j[k.field]);d.append(head,out);saved.append(d)}
+}
+function atsView(r){
+  const box=el("div");
+  const top=el("div","ats");
+  top.append(el("span",r.score>=80?"ok":"miss",`ATS keyword match ${r.matched.length}/${r.total} (${r.score}%)`),
+    el("span",r.pages<=2?"ok":"miss",`${r.pages} page${r.pages===1?"":"s"}`),el("span",null,`${r.words} words`),
+    el("span",r.headings?"ok":"miss",r.headings?"Standard headings":"Check headings"));
+  box.append(top);
+  if(r.missing.length)box.append(el("p","note","Not in this CV: "+r.missing.join(", ")+". Add any you've genuinely used to My CV, then tap Write again."));
+  return box}
+$("d-close").onclick=closeDetail;
+$("detailBg").onclick=e=>{if(e.target===$("detailBg"))closeDetail()};
+$("d-edit").onclick=()=>{const j=current();closeDetail();openForm(j)};
+async function patch(id,data){
+  if(!db)return;try{await db.collection("jobs").doc(id).update({...data,updated:new Date().toISOString()})}
+  catch(e){showMsg("Couldn't save: "+(e.message||e.code))}}
+$("d-status").onchange=()=>{const j=current();if(!j)return;const s=$("d-status").value;const d={status:s};if(s==="applied"&&!j.applied)d.applied=today();patch(j.id,d)};
+$("d-nextDate").onchange=()=>{const j=current();if(j)patch(j.id,{nextDate:$("d-nextDate").value})};
+
+async function copyText(text,btn){
+  try{await navigator.clipboard.writeText(text);btn.textContent="Copied"}catch(e){btn.textContent="Copy failed"}
+  setTimeout(()=>btn.textContent="Copy",1500)}
+function fileBase(j,kind){return `${KINDS[kind].file} - ${j.company||j.title||"job"}`.replace(/[\\/:*?"<>|]/g,"").replace(/\s+/g," ").trim().slice(0,90)}
+async function saveFile(j,kind,fmt,btn,label){
+  const md=j[KINDS[kind].field];const base=fileBase(j,kind);btn.disabled=true;btn.textContent="Preparing…";
+  try{
+    const data=fmt==="pdf"?(await buildPdf(md,base)).blob:await buildDocx(md,base);
+    btn.textContent="Saving…";
+    await downloads.save({filename:`${base}.${fmt}`,data});btn.textContent="Saved"}
+  catch(e){btn.textContent=e.code==="declined"?label:e.message==="load"?"No connection, try again":e.code==="extension_not_enabled"?"Not available here":"Not saved"}
+  finally{btn.disabled=false;setTimeout(()=>btn.textContent=label,2500)}}
+
+/* --- AI writing (runs on the viewer's own Claude account) --- */
+const RULES=`Rules:
+- Use ONLY facts from the master CV. Never invent employers, dates, job titles, degrees, certifications, numbers or skills. You may reword, reorder, select and emphasise.
+- UK English spelling and UK conventions (CV, not résumé). No photo, age or marital status.
+- Match the job advert's keywords where the CV truthfully supports them.
+- Output clean Markdown only, with no preamble or closing remarks.`;
+function visaLine(j){
+  return j.visa==="later"
+   ?"Right to work: on a UK Student visa now; moving to a Graduate visa from January 2027, which gives full-time right to work for 2 years with no sponsorship needed. This job is for after that date."
+   :"Right to work: on a UK Student visa, so can work up to 20 hours a week in term time (full time in university vacations), as an employee (not self-employed). Graduate visa from January 2027.";}
+function jobBlock(j){return `JOB\nTitle: ${j.title}\nCompany: ${j.company||"unknown"}\nLocation: ${j.location||"unknown"}\nPay: ${j.pay||"not stated"}\n\nJOB ADVERT:\n${(j.description||"").trim()||"(No advert text saved. Tailor to what this job title at this company typically needs, using common requirements for the role, and keep claims strictly to the master CV.)"}`}
+function prompt(kind,j){
+  if(kind==="cv")return `You are an expert UK tech recruiter and ATS specialist writing a tailored CV for Sunil.\n\n${RULES}\n\nATS FORMAT (this CV must parse cleanly in applicant tracking systems):\n- Single column Markdown only: no tables, columns, images, icons, emojis, horizontal rules or links in brackets.\n- Use exactly this layout and these headings, in capitals:\n# SUNIL DENNIS\n(one line) a headline that uses the advert's job title where his experience truthfully fits, e.g. "Python / Django Developer"\n(one line) contact details from the master CV separated by " | ": city, phone, email, LinkedIn, GitHub (plain text, only those in the master CV)\n## PROFILE\n3-4 lines aimed at this role, naming the advert's main skills he has.\n## SKILLS\n4-6 bullets, each "- **Category:** item, item, item", with the advert's skills first.\n## EXPERIENCE\nFor each role "### Job Title | Company | Location | Mon YYYY - Mon YYYY" then bullets: 4-6 for the most relevant role, 2-3 for older or less relevant roles. Merge or drop roles that add nothing for this job.\n## PROJECTS\nOnly if useful: 1-3 projects, "### Name | Main tech" plus 1-2 bullets.\n## EDUCATION\n"### Degree | Institution | YYYY - YYYY", most recent first.\n## CERTIFICATIONS\nOnly if the master CV has any.\n\nKEYWORDS: use these advert keywords, spelled exactly as written here, wherever the master CV truthfully supports them (skills, profile and bullets). Skip any he doesn't have: ${(j.keywords||[]).join(", ")||"(take them from the advert)"}\nWrite acronyms with the full form once, e.g. "Django REST Framework (DRF)".\n\nLENGTH: it must fit on 2 A4 pages at 10pt, so 550-700 words in total. Bullets start with a strong past-tense verb (present tense for the current role) and stay on 1-2 lines. Use numbers only where the master CV gives them.\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
+  if(kind==="letter")return `Write a cover letter from Sunil Dennis for this job.\n\n${RULES}\n- 250-350 words, 4 short paragraphs: why this role and company, two or three concrete matches between the advert and his experience, what he would bring, a confident close.\n- Plain and specific, no clichés like "I am writing to express my interest".\n- Mention right to work in one plain sentence, based on: ${visaLine(j)}\n- Start with 'Dear Hiring Manager,' unless the advert names a person. End with 'Kind regards,' and 'Sunil Dennis' and his phone and email from the CV.\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
+  return `Build an interview prep pack for Sunil for this job.\n\n${RULES}\n- You cannot browse, so base company points only on the advert and say what Sunil should look up himself.\n\nUse these sections:\n## The role in one minute (what they really need, from the advert)\n## Your 2-minute pitch (first person, tailored, from the CV)\n## Likely questions and strong answers (10 questions: mix of technical on their stack and behavioural; answer behavioural ones in STAR form using real CV examples)\n## Technical topics to revise (bullets, most likely first)\n## Gaps and how to handle them (where the CV is thin against the advert, and an honest way to answer)\n## Questions to ask them (5)\n## Right to work answer (one or two sentences, based on: ${visaLine(j)})\n## Check before the interview (things to look up about the company)\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
+}
+function aiNote(t){const n=$("d-aiNote");n.textContent=t||"";n.hidden=!t}
+async function advertKeywords(j,signal){
+  if(j.keywords&&j.keywords.length)return j.keywords;
+  try{const r=await sample.json(`From this UK job advert, list the 15 keywords an applicant tracking system is most likely to screen for: hard skills, languages, frameworks, tools, methods and required qualifications. Use the exact wording from the advert, short phrases only, most important first. No soft skills, no company names. Return {"keywords":[...]}.\n\n${jobBlock(j)}`,{signal,modelTier:"quick",cache:false});
+    const kw=[...new Set((r&&r.keywords||[]).map(x=>String(x).trim()).filter(Boolean))].slice(0,15);
+    if(kw.length)await patch(j.id,{keywords:kw});return kw}
+  catch(e){if(e.code==="cancelled")throw e;return []}}
+const norm=t=>" "+t.toLowerCase().replace(/[^a-z0-9+#.]+/g," ").replace(/\.(?=\s|$)/g,"")+" ";
+function atsCheck(md,keywords,pages){
+  const text=norm(md);
+  const has=k=>{const n=norm(k).trim();if(!n)return true;return text.includes(" "+n+" ")||text.includes(" "+n.replace(/s$/,"")+" ")||text.includes(" "+n+"s ")||text.includes(" "+n.replace(/\s/g,"")+" ")};
+  const matched=keywords.filter(has),missing=keywords.filter(k=>!has(k));
+  const heads=[...md.matchAll(/^##\s+(.+)$/gm)].map(m=>m[1].trim().toUpperCase());
+  const headings=["PROFILE","SKILLS","EXPERIENCE","EDUCATION"].every(h=>heads.some(x=>x.startsWith(h)));
+  return {total:keywords.length,matched,missing,score:keywords.length?Math.round(100*matched.length/keywords.length):100,pages,headings,words:md.replace(/[#*|-]/g," ").split(/\s+/).filter(Boolean).length}}
+async function generate(kind){
+  const j=current();if(!j)return;
+  if(!sample){aiNote("Writing isn't available in this view. Open the tracker in the Claude app.");return}
+  if(!cv.trim()){aiNote("Add your CV in the My CV tab first.");return}
+  const noAdvert=!(j.description||"").trim();
+  aiNote("");const k=KINDS[kind];
+  ctl?.abort();ctl=new AbortController();const myCtl=ctl;
+  document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=true);
+  $("d-live").hidden=false;const title=$("d-liveTitle");
+  const out=$("d-liveOut");
+  try{
+    let keywords=[];
+    if(kind==="cv"){title.textContent="Reading the advert for ATS keywords…";out.textContent="Finding what the employer's screening software looks for.";keywords=await advertKeywords(j,myCtl.signal);j.keywords=keywords}
+    title.textContent="Writing your "+k.label.toLowerCase()+"…";out.textContent="Thinking… this usually takes under a minute.";
+    let {text,truncated}=await sample(prompt(kind,j),{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)});
+    const data={[k.field]:text};
+    if(kind==="cv"){
+      let pages=null;
+      try{
+        title.textContent="Checking it fits on 2 pages…";
+        pages=(await buildPdf(text,"check")).pages;
+        for(let tries=0;pages>2&&tries<2;tries++){
+          title.textContent=`It ran to ${pages} pages. Shortening to 2…`;
+          const words=text.split(/\s+/).length,target=Math.round(words*(tries?0.75:0.82));
+          ({text}=await sample(`This tailored CV is ${pages} A4 pages and must fit on 2. Shorten it to about ${target} words: cut the least relevant bullets, merge older roles, tighten wording. Keep the exact Markdown layout, headings, contact line and every keyword that matches the job. Do not add anything new. Output only the CV.\n\nJOB TITLE: ${j.title}\n\nCV:\n${text}`,{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)}));
+          pages=(await buildPdf(text,"check")).pages}
+      }catch(e){if(e.code==="cancelled")throw e}
+      data[k.field]=text;
+      data.atsReport=atsCheck(text,keywords,pages??0);
+      if(pages>2)aiNote("Still a bit over 2 pages. Tap Write again, or trim a bullet or two in Word.");
+      if(pages==null)aiNote("Couldn't check the page count (no connection to the PDF tool). The text aims for 2 pages.")}
+    if(j.status==="new")data.status="saved";
+    openKind=kind;
+    await patch(j.id,data);
+    $("d-live").hidden=true;
+    if(truncated)aiNote("This came out cut short. Tap Write again for a fuller version.");
+    else if(noAdvert)aiNote("This job has no advert saved, so it's tailored to the job title only. For a sharper match, tap Edit details, paste the advert, then Write again.");
+  }catch(e){
+    if(e.code==="cancelled"){$("d-live").hidden=true}
+    else{if(e.text)renderMd(out,e.text);title.textContent=k.label;
+      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="rate_limited"?"Too many requests just now. Try again in a minute.":"Couldn't finish writing ("+e.code+"). Try again.")}
+  }finally{document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
+}
+document.querySelectorAll(".tools .btn").forEach(b=>b.onclick=()=>generate(b.dataset.kind));
+$("d-stop").onclick=()=>ctl?.abort();
+
+
+/* --- Inbox: interview invites from Gmail, added to Google Calendar --- */
+const INBOX_QUERY='newer_than:21d -category:promotions -category:social -in:sent (interview OR "phone screen" OR "video call" OR "telephone call" OR assessment OR "next stage" OR "your availability" OR "invite you" OR "invitation to" OR "shortlisted")';
+function mcpErr(e,server){
+  const c=e&&e.code;
+  if(c==="needs_reauth")return `Reconnect ${server} in Claude Settings › Connectors, then try again.`;
+  if(c==="server_not_connected"||c==="selection_required")return `Connect ${server} in Claude Settings › Connectors, then try again.`;
+  if(c==="not_in_manifest"||c==="approval_required"||c==="consent_required")return `${server} isn't allowed for this page yet. Tap the button again and choose Allow.`;
+  if(c==="server_unavailable"||c==="upstream_error")return `${server} didn't answer just now. Try again in a moment.`;
+  if(c==="tool_error")return `${server} said: ${e.message}`;
+  return `${server} problem (${c||"unknown"}).`;
+}
+const emailOf=s=>((s||"").match(/[^\s<>"]+@[^\s<>"]+/)||[""])[0];
+function inboxMsg(t){$("inboxMsg").textContent=t||""}
+function fmtWhen(start){if(!start)return"Time not fixed yet";const d=new Date(start);if(isNaN(d))return start;return d.toLocaleString("en-GB",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
+function renderInbox(){
+  const l=$("inboxList");l.replaceChildren();
+  const show=invites.filter(i=>i.status!=="dismissed").sort((a,b)=>(a.status==="found"?0:1)-(b.status==="found"?0:1)||(b.date||"").localeCompare(a.date||""));
+  if(!show.length){l.append(el("div","empty",mcp?"No interview emails found yet. Tap Check inbox.":"Inbox checks need Gmail and Google Calendar, which only work when this tracker is opened in the Claude app."));return}
+  for(const i of show){
+    const c=el("div","invite"+(i.status==="added"?" done":""));
+    const top=el("div","top");const left=el("div");left.style.minWidth="0";
+    left.append(el("div","role",[i.stage||"Interview",i.role].filter(Boolean).join(": ")),el("div","co",[i.company,i.sender].filter(Boolean).join(" · ")));
+    top.append(left,el("span","pill",i.status==="added"?"In calendar":"New"));top.style.setProperty("--c",i.status==="added"?"var(--s-offer)":"var(--s-interview)");
+    c.append(top,el("div","when",fmtWhen(i.start)+(i.durationMinutes?` · ${i.durationMinutes} min`:"")));
+    if(i.location||i.meetingLink)c.append(el("div","note",[i.location,i.meetingLink].filter(Boolean).join(" · ")));
+    if(i.summary)c.append(el("div","note",i.summary));
+    const b=el("div","btns");
+    if(i.viewUrl){const a=el("a","btn sm","Open email");a.href=i.viewUrl;a.target="_blank";a.rel="noopener";a.style.textDecoration="none";b.append(a)}
+    if(i.status!=="added"){
+      const add=el("button","btn sm primary",i.start?"Add to calendar":"Add to tracker");add.type="button";add.onclick=()=>acceptInvite(i,add);b.append(add)}
+    if(i.draftUrl){const a=el("a","btn sm","Open draft reply");a.href=i.draftUrl;a.target="_blank";a.rel="noopener";a.style.textDecoration="none";b.append(a)}
+    else{const d=el("button","btn sm","Draft a reply");d.type="button";d.onclick=()=>draftReply(i,d);b.append(d)}
+    if(i.status!=="added"){const x=el("button","btn sm","Not an interview");x.type="button";x.onclick=()=>db.collection("inbox").doc(i.id).update({status:"dismissed"}).catch(()=>{});b.append(x)}
+    c.append(b);
+    const st=el("div","note");st.id="inv-"+i.id;c.append(st);
+    l.append(c)}
+}
+async function scanInbox(){
+  if(!mcp||!sample||!db){inboxMsg("Open the tracker in the Claude app to check your inbox.");return}
+  const btn=$("inboxScan");btn.disabled=true;
+  try{
+    inboxMsg("Searching Gmail…");
+    let res;try{res=(await mcp.callTool("Gmail","search_threads",{query:INBOX_QUERY,pageSize:30},{cache:false})).payload}catch(e){inboxMsg(mcpErr(e,"Gmail"));return}
+    const known=new Set(invites.map(i=>i.id));
+    const threads=(res&&res.threads||[]).filter(t=>!known.has(t.id));
+    if(!threads.length){inboxMsg("No new interview emails. Checked "+new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})+".");return}
+    inboxMsg(`Reading ${threads.length} possible emails…`);
+    const list=threads.map(t=>{const m=(t.messages||[])[0]||{};return{id:t.id,from:m.sender,subject:m.subject,snippet:(m.snippet||"").slice(0,300),date:m.date}});
+    let picked=[];
+    try{const r=await sample.json(`Sunil is job hunting in the UK. Below are email previews (JSON). Return a JSON object {"ids":[...]} listing ONLY the ids that look like a real employer or recruiter contacting him about a specific job: an interview invitation, a request for interview availability, an interview confirmation or reschedule, or an assessment/coding test invitation. Exclude job alert digests, newsletters, marketing, webinars, course ads and generic "we received your application" emails.\n\n${JSON.stringify(list)}`,{modelTier:"quick",cache:false});picked=(r&&r.ids||[]).filter(id=>list.some(x=>x.id===id)).slice(0,8)}
+    catch(e){inboxMsg(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":"Couldn't sort the emails ("+e.code+").");return}
+    if(!picked.length){inboxMsg("No interview emails among the new ones. Checked just now.");return}
+    const jobList=jobs.filter(j=>j.status!=="rejected").map(j=>({id:j.id,title:j.title,company:j.company}));
+    let n=0;
+    for(const id of picked){
+      inboxMsg(`Reading email ${++n} of ${picked.length}…`);
+      let th;try{th=(await mcp.callTool("Gmail","get_thread",{threadId:id,messageFormat:"PLAIN_TEXT"},{cache:false})).payload}catch(e){inboxMsg(mcpErr(e,"Gmail"));continue}
+      const msgs=(th&&th.messages||[]);const last=msgs[msgs.length-1]||{};
+      const firstExternal=msgs.find(m=>!/@gmail\.com/i.test(m.sender||""))||last;
+      const text=msgs.map(m=>`From: ${m.sender}\nDate: ${m.date}\nSubject: ${m.subject}\n\n${(m.plaintextBody||m.snippet||"").slice(0,5000)}`).join("\n\n---\n\n").slice(-12000);
+      let info;
+      try{info=await sample.json(`Read this email thread to Sunil (UK, times are UK time unless stated). Today is ${today()}. Return JSON with these keys:\n{"isInterview": boolean (true only for an interview, interview scheduling, or assessment from an employer/recruiter),\n"company": string, "role": string, "stage": short label like "Phone screen", "Technical interview", "Assessment",\n"start": "YYYY-MM-DDTHH:MM" in UK local time if a specific time is confirmed, else null,\n"durationMinutes": number or null, "location": string or null, "meetingLink": url or null,\n"needsReply": boolean (they ask him to confirm, pick a slot or give availability),\n"summary": one plain sentence on what they want and any deadline,\n"matchJobId": the id of the matching job from this list or null: ${JSON.stringify(jobList)} }\n\nTHREAD:\n${text}`,{modelTier:"default",cache:false})}
+      catch(e){inboxMsg("Couldn't read one email ("+e.code+").");continue}
+      if(!info||!info.isInterview){await db.collection("inbox").doc(id).set({status:"dismissed",subject:last.subject||"",date:last.date||""}).catch(()=>{});continue}
+      await db.collection("inbox").doc(id).set({status:"found",company:info.company||"",role:info.role||"",stage:info.stage||"Interview",start:info.start||"",durationMinutes:info.durationMinutes||null,location:info.location||"",meetingLink:info.meetingLink||"",needsReply:!!info.needsReply,summary:info.summary||"",matchJobId:info.matchJobId||"",sender:emailOf(firstExternal.sender),replyToMessageId:last.id||"",subject:last.subject||"",viewUrl:th.viewUrl||"",date:last.date||""}).catch(e=>inboxMsg("Couldn't save ("+e.code+")."));
+    }
+    inboxMsg("Done. Checked "+new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})+".");
+  }finally{btn.disabled=false}
+}
+$("inboxScan").onclick=scanInbox;
+function addMinutes(local,mins){const [d,t]=local.split("T");const [y,mo,da]=d.split("-").map(Number);const [h,mi]=t.split(":").map(Number);const x=new Date(Date.UTC(y,mo-1,da,h,mi+mins));return x.toISOString().slice(0,16)}
+async function acceptInvite(i,btn){
+  const st=$("inv-"+i.id);btn.disabled=true;
+  try{
+    if(i.start){
+      st.textContent="Adding to Google Calendar…";
+      const start=i.start.slice(0,16);
+      try{await mcp.callTool("Google Calendar","create_event",{
+        summary:`${i.stage||"Interview"}: ${i.role||"role"} at ${i.company||"company"}`,
+        startTime:start+":00",endTime:addMinutes(start,i.durationMinutes||60)+":00",timeZone:"Europe/London",
+        location:i.meetingLink||i.location||"",
+        description:`${i.summary||""}\n\nEmail: ${i.viewUrl||""}\nPrep pack: open this job in your job tracker and tap Interview prep.`,
+        overrideReminders:[{method:"popup",minutes:1440},{method:"popup",minutes:60}]})}
+      catch(e){st.textContent=mcpErr(e,"Google Calendar")+(e.code==="server_unavailable"||e.code==="upstream_error"?" Check your calendar before trying again, in case it was added.":"");return}
+    }
+    st.textContent="Updating your tracker…";
+    const upd={status:"interview",next:i.stage||"Interview",nextDate:i.start?i.start.slice(0,10):"",updated:new Date().toISOString()};
+    let jobId=i.matchJobId&&jobs.some(j=>j.id===i.matchJobId)?i.matchJobId:"";
+    if(jobId)await db.collection("jobs").doc(jobId).update(upd);
+    else{const ref=await db.collection("jobs").add({title:i.role||"Role from email",company:i.company||"",location:i.location||"",url:"",description:"",visa:"now",pay:"",applied:"",notes:i.summary||"",created:upd.updated,...upd});jobId=ref.id}
+    await db.collection("inbox").doc(i.id).update({status:"added",matchJobId:jobId});
+    st.textContent=i.start?"Added to your calendar with reminders a day and an hour before.":"Added to your tracker. Add the time once it's confirmed.";
+  }catch(e){st.textContent="Couldn't finish ("+(e.code||e.message)+")."}
+  finally{btn.disabled=false}
+}
+async function draftReply(i,btn){
+  const st=$("inv-"+i.id);
+  if(!i.sender){st.textContent="Couldn't find who to reply to. Reply from Gmail instead.";return}
+  btn.disabled=true;st.textContent="Writing a reply…";
+  try{
+    const {text}=await sample(`Write a short, polite plain-text email reply from Sunil Dennis to this interview email. ${i.needsReply?"They asked him to confirm or give availability: confirm warmly, and where times are needed write [ADD YOUR AVAILABILITY] for him to fill in.":"Confirm he will attend and thank them."} UK English, no subject line, no markdown, sign off "Kind regards,\\nSunil Dennis".\n\nEmail summary: ${i.summary}\nCompany: ${i.company}\nRole: ${i.role}\nWhen: ${i.start||"not fixed"}`,{modelTier:"quick",cache:false});
+    st.textContent="Saving the draft in Gmail…";
+    let r;try{r=(await mcp.callTool("Gmail","create_draft",{to:[i.sender],subject:/^re:/i.test(i.subject)?i.subject:"Re: "+(i.subject||"Interview"),body:text.trim(),...(i.replyToMessageId?{replyToMessageId:i.replyToMessageId}:{})})).payload}
+    catch(e){st.textContent=mcpErr(e,"Gmail")+(e.code==="server_unavailable"||e.code==="upstream_error"?" Check Gmail drafts before trying again.":"");return}
+    await db.collection("inbox").doc(i.id).update({draftUrl:(r&&r.viewUrl)||"https://mail.google.com/mail/#drafts"});
+    st.textContent="Draft saved in Gmail. Check it and press Send yourself.";
+  }catch(e){st.textContent=e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":"Couldn't write the reply ("+e.code+")."}
+  finally{btn.disabled=false}
+}
+
+
+/* --- Practice interview: Claude plays the interviewer --- */
+let chat=null, chatCtl=null;
+function chatBubble(role,text){const b=el("div","bubble "+(role==="user"?"me":"them"));if(role==="user")b.textContent=text;else renderMd(b,text);$("chatLog").append(b);b.scrollIntoView({block:"nearest"});return b}
+async function chatTurn(){
+  const j=current();if(!j||!chat)return;
+  const rules=`You are the interviewer at ${j.company||"the company"} for the role "${j.title}". Run a realistic UK job interview with Sunil, one question at a time.\n- Ask 6 questions in total: a mix of motivation, behavioural (STAR) and technical questions on the stack in the advert, pitched at the role's level.\n- After each answer, give short feedback first: a score out of 5, one thing that worked, one thing to improve, and a stronger example phrase drawn only from his real CV. Then ask the next question.\n- After the 6th answer, give an overall verdict, his top 3 things to practise, and stop.\n- Keep each message under 150 words. Never answer for him.\n\n${jobBlock(j)}\n\nHIS CV (for your feedback only):\n${cv}`;
+  const turns=[{role:"user",content:rules+"\n\nStart the interview now with a one-line welcome and your first question."},...chat];
+  chatCtl?.abort();chatCtl=new AbortController();const my=chatCtl;
+  const b=chatBubble("assistant","Thinking…");$("chatSend").disabled=true;
+  try{const {text}=await sample(turns,{signal:my.signal,cache:false,modelTier:"default",onText:({text})=>renderMd(b,text)});chat.push({role:"assistant",content:text});renderMd(b,text)}
+  catch(e){if(e.code==="cancelled")b.remove();else{renderMd(b,e.text||"");b.append(el("p","note",e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":"Couldn't continue ("+e.code+"). Tap Send to try again."));if(chat.length&&chat[chat.length-1].role==="assistant")chat.pop()}}
+  finally{$("chatSend").disabled=false}
+}
+$("d-practice").onclick=()=>{
+  const j=current();if(!j)return;
+  if(!sample){aiNote("Practice isn't available in this view. Open the tracker in the Claude app.");return}
+  if(!(j.description||"").trim()){aiNote("Paste the job advert first: tap Edit details and fill in Job description.");return}
+  aiNote("");chat=[];$("chatLog").replaceChildren();$("d-chat").hidden=false;$("d-chat").scrollIntoView({block:"nearest"});chatTurn()};
+$("chatSend").onclick=()=>{const t=$("chatIn").value.trim();if(!t||!chat)return;chatBubble("user",t);chat.push({role:"user",content:t});$("chatIn").value="";chatTurn()};
+$("chatEnd").onclick=()=>{chatCtl?.abort();chat=null;$("d-chat").hidden=true};
+
+/* --- Fill the add form from a pasted advert or alert --- */
+$("fillBtn").onclick=async()=>{
+  const text=$("f-description").value.trim();
+  if(!text){$("fillMsg").textContent="Paste the advert or alert first.";return}
+  if(!sample){$("fillMsg").textContent="Open the tracker in the Claude app to use this.";return}
+  $("fillBtn").disabled=true;$("fillMsg").textContent="Reading the advert…";
+  try{
+    const r=await sample.json(`Extract job details from this UK job advert or job alert. Return JSON: {"title": string, "company": string, "location": string, "pay": short string like "£35–45k" or "", "url": the job link if present else "", "visa": "now" if it is part-time (20 hours a week or less) or temporary/flexible AND employed (not freelance, self-employed, contractor via own company or day rate), otherwise "later"}.\n\n${text.slice(0,15000)}`,{modelTier:"quick",cache:false});
+    for(const k of ["title","company","location","pay","url"])if(r&&r[k]&&!$("f-"+k).value.trim())$("f-"+k).value=r[k];
+    if(r&&(r.visa==="now"||r.visa==="later"))$("f-visa").value=r.visa;
+    $("fillMsg").textContent="Filled in. Check the details, then Save.";
+  }catch(e){$("fillMsg").textContent=e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":"Couldn't read it ("+e.code+")."}
+  finally{$("fillBtn").disabled=false}
+};
+
+/* --- Job alerts: the alert bot emails each batch to Gmail; new jobs land here as "New" --- */
+const ALERT_QUERY='subject:"[Job alert]" newer_than:14d';
+let importing=false,alertsChecked=false;
+function alertMsg(t){$("alertMsg").textContent=t||""}
+function b64json(b64){const bin=atob(b64.replace(/\s+/g,""));const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));return JSON.parse(new TextDecoder().decode(bytes))}
+function alertDocId(key){return "alert-"+String(key).toLowerCase().replace(/[^a-z0-9_-]+/g,"-").slice(0,120)}
+async function importAlerts(){
+  if(importing)return;
+  if(!mcp||!db){alertMsg("Open the tracker in the Claude app to load job alerts.");return}
+  importing=true;const btn=$("alertScan");btn.disabled=true;
+  try{
+    alertMsg("Checking job alert emails…");
+    let res;try{res=(await mcp.callTool("Gmail","search_threads",{query:ALERT_QUERY,pageSize:30},{cache:false})).payload}catch(e){alertMsg(mcpErr(e,"Gmail"));return}
+    const done=new Set((await Promise.resolve().then(()=>db.collection("imports").get()).catch(()=>({docs:[]}))).docs.map(d=>d.id));
+    const threads=(res&&res.threads||[]).filter(t=>!done.has(t.id));
+    const have=new Set(jobs.flatMap(j=>[j.id,j.url].filter(Boolean)));
+    let added=0;
+    for(const t of threads){
+      let th;try{th=(await mcp.callTool("Gmail","get_thread",{threadId:t.id,messageFormat:"PLAIN_TEXT"},{cache:false})).payload}catch(e){alertMsg(mcpErr(e,"Gmail"));return}
+      for(const m of (th&&th.messages||[])){
+        const body=m.plaintextBody||"";const a=body.indexOf("JOBBOT-DATA-START"),b=body.indexOf("JOBBOT-DATA-END");
+        if(a<0||b<a)continue;
+        let list=[];try{list=b64json(body.slice(a+17,b))}catch(e){continue}
+        for(const r of list){
+          const id=alertDocId(r.key);if(have.has(id)||(r.url&&have.has(r.url)))continue;have.add(id);
+          const now=new Date().toISOString();
+          await db.collection("jobs").doc(id).set({title:r.title||"",company:r.company||"",location:r.location||"",url:r.url||"",pay:r.pay||"",visa:r.visa==="later"?"later":"now",description:r.description||"",status:"new",next:"Tailor CV and apply",nextDate:"",notes:`From ${r.source||"job"} alert, match ${r.score??"?"}/100`,source:r.source||"",score:r.score??null,created:now,updated:now}).then(()=>added++).catch(()=>{})}
+      }
+      await db.collection("imports").doc(t.id).set({at:new Date().toISOString()}).catch(()=>{});
+    }
+    const when=new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+    alertMsg(added?`${added} new job${added===1?"":"s"} from your alerts.`:`No new alerts. Checked ${when}.`);
+    if(added){filter="new";store("jt-filter","new");renderJobs()}
+  }finally{importing=false;btn.disabled=false}
+}
+$("alertScan").onclick=importAlerts;
+
+/* --- Add / edit form --- */
+const F=["title","company","location","url","description","status","visa","pay","applied","next","nextDate","notes"];
+function openForm(j){
+  editing=j||null;$("formTitle").textContent=j?"Edit job":"Add job";$("delBtn").hidden=!j;$("confirm").hidden=true;
+  for(const f of F)$("f-"+f).value=(j&&j[f])||"";$("fillMsg").textContent="";
+  if(!j){$("f-status").value="saved";$("f-visa").value="now"}
+  $("sheetBg").hidden=false;setTimeout(()=>$("f-title").focus(),30)}
+function closeForm(){$("sheetBg").hidden=true;editing=null}
+$("addBtn").onclick=()=>openForm(null);
+$("cancelBtn").onclick=closeForm;
+$("sheetBg").onclick=e=>{if(e.target===$("sheetBg"))closeForm()};
+document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;if(!$("sheetBg").hidden)closeForm();else if(!$("detailBg").hidden)closeDetail()});
+$("f-status").onchange=()=>{if($("f-status").value==="applied"&&!$("f-applied").value)$("f-applied").value=today()};
+$("delBtn").onclick=()=>{$("confirm").hidden=false};
+$("confirmNo").onclick=()=>{$("confirm").hidden=true};
+$("confirmYes").onclick=async()=>{if(!editing||!db)return;try{await db.collection("jobs").doc(editing.id).delete();closeForm()}catch(e){showMsg("Couldn't delete: "+(e.message||e.code))}};
+$("form").addEventListener("submit",async e=>{
+  e.preventDefault();
+  const data={};for(const f of F)data[f]=$("f-"+f).value.trim();
+  if(!data.title){$("f-title").focus();return}
+  data.updated=new Date().toISOString();
+  if(!db){showMsg("Saving isn't available in this view. Open the tracker in the Claude app.");return}
+  $("saveBtn").disabled=true;
+  try{
+    let id;
+    if(editing){id=editing.id;await db.collection("jobs").doc(id).update(data)}
+    else{const ref=await db.collection("jobs").add({...data,created:data.updated});id=ref.id}
+    closeForm();openDetail(id)
+  }catch(err){showMsg(err.code==="permission_denied"?"You can view this tracker but not change it.":"Couldn't save: "+(err.message||err.code))}
+  finally{$("saveBtn").disabled=false}
+});
+
+/* --- CV tab --- */
+$("cvSave").onclick=async()=>{
+  if(!db)return;$("cvSave").disabled=true;
+  try{await db.doc("profile/cv").set({text:$("cvText").value,updated:new Date().toISOString()});$("cvMsg").textContent="Saved"}
+  catch(e){$("cvMsg").textContent="Couldn't save ("+e.code+")"}
+  finally{$("cvSave").disabled=false;setTimeout(()=>$("cvMsg").textContent="",2000)}};
+
+/* ===== standalone app layer ===== */
+/* Standalone versions of the features that used Claude's Gmail and Calendar connectors.
+   - New jobs come from data/feed.json, which the alert bot writes to your private repo.
+   - Interview emails come from data/inbox.json (the bot checks Gmail every 2 hours).
+   - "Add to calendar" downloads an .ics invite that iPhone, Mac and Google Calendar all open.
+   - "Draft a reply" opens your mail app with the reply written; nothing is ever sent for you. */
+
+/* ---------- App connections panel (My CV tab) ---------- */
+(function connectionsPanel() {
+  const s = jobapp.settings();
+  const panel = el("div", "panel"); panel.id = "connPanel";
+  panel.innerHTML = `
+    <h3>App connections</h3>
+    <p class="note">Saved only on this device. Do this once on your iPhone and once on your Mac.</p>
+    <label>GitHub token (syncs your jobs and gets new alerts)<input id="c-gh" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+    <label>Private repo<input id="c-repo" autocomplete="off" placeholder="sunildennisb7/job-assistant"></label>
+    <label>Gemini API key (free, for CVs, cover letters and practice)<input id="c-ai" type="password" autocomplete="off" placeholder="AIza…"></label>
+    <label>AI model<input id="c-model" autocomplete="off" placeholder="gemini-2.5-flash"></label>
+    <div class="actions"><span class="status" id="c-msg"></span><button class="btn primary" id="c-save" type="button">Save and test</button></div>
+    <p class="note" id="c-sync"></p>`;
+  const cvView = $("view-cv");
+  cvView.insertBefore(panel, cvView.firstChild);
+  $("c-gh").value = s.githubToken; $("c-repo").value = s.repo; $("c-ai").value = s.geminiKey; $("c-model").value = s.model;
+  $("c-save").onclick = async () => {
+    const btn = $("c-save"); btn.disabled = true; const msg = $("c-msg");
+    jobapp.saveSettings({ githubToken: $("c-gh").value.trim(), repo: $("c-repo").value.trim() || "sunildennisb7/job-assistant",
+                          geminiKey: $("c-ai").value.trim(), model: $("c-model").value.trim() || "gemini-2.5-flash" });
+    const out = [];
+    try {
+      if (jobapp.gh.ready()) { await jobapp.syncNow(); out.push(jobapp.syncState.status === "synced" ? "GitHub works" : "GitHub: " + jobapp.syncState.message); }
+      if (jobapp.settings().geminiKey) {
+        msg.textContent = "Testing AI…";
+        try { await jobapp.sample("Reply with the single word OK."); out.push("AI works"); }
+        catch (e) { out.push(e.code === "not_granted" ? "AI key not accepted" : e.code === "rate_limited" ? "AI works (busy, try later)" : "AI test failed (" + e.code + ")"); }
+      }
+      msg.textContent = out.join(" · ") || "Saved";
+      const cur = jobapp.settings(); if (cur.githubToken && cur.geminiKey) $("setupHint")?.remove();
+      if (jobapp.gh.ready()) { importAlerts(); }
+    } finally { btn.disabled = false; }
+  };
+  const showSync = d => { $("c-sync").textContent = d.message + (d.at && d.status === "synced" ? " at " + d.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : ""); };
+  window.addEventListener("jobapp-sync", e => showSync(e.detail));
+  showSync(jobapp.syncState);
+})();
+
+/* First-run hint on the Jobs tab */
+(function setupHint() {
+  const s = jobapp.settings();
+  if (s.githubToken && s.geminiKey) return;
+  const hint = el("p", "note");
+  hint.append("Finish setup: add your GitHub token and free AI key in ");
+  const a = el("a", null, "My CV › App connections"); a.href = "#"; a.onclick = e => { e.preventDefault(); setTab("cv"); };
+  hint.append(a, ".");
+  hint.id = "setupHint";
+  $("view-jobs").insertBefore(hint, $("view-jobs").firstChild);
+})();
+
+/* ---------- New jobs from the alert bot ---------- */
+function importAlerts() {
+  return (async () => {
+    if (importing) return;
+    if (!jobapp.gh.ready()) { alertMsg("Add your GitHub token in My CV › App connections to load job alerts."); return; }
+    importing = true; const btn = $("alertScan"); btn.disabled = true;
+    try {
+      alertMsg("Checking job alerts…");
+      let file;
+      try { file = await jobapp.gh.readFile("data/feed.json"); }
+      catch (e) { alertMsg(e.code === "bad_github_token" ? "GitHub token not accepted." : "Couldn't reach GitHub. Try again later."); return; }
+      if (!file) { alertMsg("No alerts yet. They appear after the bot's next run."); return; }
+      let list = []; try { list = JSON.parse(file.text); } catch (e) { list = []; }
+      const have = new Set(jobs.flatMap(j => [j.id, j.url].filter(Boolean)));
+      const done = new Set((await db.collection("imports").get()).docs.map(d => d.id));
+      let added = 0; const now = new Date().toISOString();
+      for (const r of list) {
+        const id = alertDocId(r.key);
+        if (done.has(id) || have.has(id) || (r.url && have.has(r.url))) continue;
+        have.add(id);
+        await db.collection("jobs").doc(id).set({ title: r.title || "", company: r.company || "", location: r.location || "", url: r.url || "",
+          pay: r.pay || "", visa: r.visa === "later" ? "later" : "now", description: r.description || "", status: "new",
+          next: "Tailor CV and apply", nextDate: "", notes: `From ${r.source || "job"} alert, match ${r.score ?? "?"}/100`,
+          source: r.source || "", score: r.score ?? null, created: now, updated: now });
+        await db.collection("imports").doc(id).set({ at: now });
+        added++;
+      }
+      const when = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      alertMsg(added ? `${added} new job${added === 1 ? "" : "s"} from your alerts.` : `No new alerts. Checked ${when}.`);
+      if (added) { filter = "new"; store("jt-filter", "new"); renderJobs(); }
+    } finally { importing = false; btn.disabled = false; }
+  })();
+}
+$("alertScan").onclick = importAlerts;
+
+/* ---------- Interview emails found by the bot ---------- */
+async function scanInbox() {
+  if (!jobapp.gh.ready()) { inboxMsg("Add your GitHub token in My CV › App connections first."); return; }
+  const btn = $("inboxScan"); btn.disabled = true;
+  try {
+    inboxMsg("Loading emails the bot found…");
+    let file;
+    try { file = await jobapp.gh.readFile("data/inbox.json"); } catch (e) { inboxMsg("Couldn't reach GitHub. Try again later."); return; }
+    let list = []; try { list = file ? JSON.parse(file.text) : []; } catch (e) { list = []; }
+    const known = new Set(invites.map(i => i.id));
+    const fresh = list.filter(m => !known.has(m.id));
+    if (!fresh.length) { inboxMsg(list.length || file ? "No new interview emails. Checked " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) + "." : "Nothing yet. The bot checks Gmail every 2 hours once its Gmail secrets are set."); return; }
+    const jobList = jobs.filter(j => j.status !== "rejected").map(j => ({ id: j.id, title: j.title, company: j.company }));
+    let n = 0;
+    for (const m of fresh.slice(0, 10)) {
+      inboxMsg(`Reading email ${++n} of ${Math.min(fresh.length, 10)}…`);
+      const base = { sender: emailOf(m.from || ""), subject: m.subject || "", date: m.date || "", replyToMessageId: m.messageId || "",
+        viewUrl: m.messageId ? "https://mail.google.com/mail/u/0/#search/" + encodeURIComponent("rfc822msgid:" + m.messageId.replace(/[<>]/g, "")) : "" };
+      let info = null;
+      try {
+        info = await sample.json(`Read this email to Sunil (UK, times are UK time unless stated). Today is ${today()}. Return JSON with these keys:\n{"isInterview": boolean (true only for an interview, interview scheduling, or assessment from an employer/recruiter; false for job alerts, newsletters, marketing, courses and plain "we received your application" emails),\n"company": string, "role": string, "stage": short label like "Phone screen", "Technical interview", "Assessment",\n"start": "YYYY-MM-DDTHH:MM" in UK local time if a specific time is confirmed, else null,\n"durationMinutes": number or null, "location": string or null, "meetingLink": url or null,\n"needsReply": boolean (they ask him to confirm, pick a slot or give availability),\n"summary": one plain sentence on what they want and any deadline,\n"matchJobId": the id of the matching job from this list or null: ${JSON.stringify(jobList)} }\n\nEMAIL:\nFrom: ${m.from}\nDate: ${m.date}\nSubject: ${m.subject}\n\n${(m.text || "").slice(0, 8000)}`);
+      } catch (e) {
+        if (e.code === "not_granted") { inboxMsg("Add your free Gemini AI key in My CV › App connections, then try again."); return; }
+        // Without AI, still show it so nothing is missed.
+        info = { isInterview: true, company: "", role: "", stage: "Possible interview", start: "", summary: m.subject || "" };
+      }
+      if (!info || !info.isInterview) { await db.collection("inbox").doc(m.id).set({ status: "dismissed", ...base }); continue; }
+      await db.collection("inbox").doc(m.id).set({ status: "found", company: info.company || "", role: info.role || "", stage: info.stage || "Interview",
+        start: info.start || "", durationMinutes: info.durationMinutes || null, location: info.location || "", meetingLink: info.meetingLink || "",
+        needsReply: !!info.needsReply, summary: info.summary || "", matchJobId: info.matchJobId || "", ...base });
+    }
+    inboxMsg("Done. Checked " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) + ".");
+  } finally { btn.disabled = false; }
+}
+$("inboxScan").onclick = scanInbox;
+
+/* .ics calendar invite with reminders a day and an hour before */
+function icsFor(i) {
+  const start = i.start.slice(0, 16), end = addMinutes(start, i.durationMinutes || 60);
+  const t = x => x.replace(/[-:]/g, "") + "00";
+  const esc = x => String(x || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/[,;]/g, m => "\\" + m);
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Job tracker//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+    "BEGIN:VTIMEZONE", "TZID:Europe/London",
+    "BEGIN:DAYLIGHT", "TZOFFSETFROM:+0000", "TZOFFSETTO:+0100", "TZNAME:BST", "DTSTART:19700329T010000", "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU", "END:DAYLIGHT",
+    "BEGIN:STANDARD", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0000", "TZNAME:GMT", "DTSTART:19701025T020000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU", "END:STANDARD",
+    "END:VTIMEZONE",
+    "BEGIN:VEVENT", `UID:${i.id}@job-tracker`, `DTSTAMP:${stamp}`,
+    `DTSTART;TZID=Europe/London:${t(start)}`, `DTEND;TZID=Europe/London:${t(end)}`,
+    `SUMMARY:${esc(`${i.stage || "Interview"}: ${i.role || "role"} at ${i.company || "company"}`)}`,
+    `LOCATION:${esc(i.meetingLink || i.location || "")}`,
+    `DESCRIPTION:${esc(`${i.summary || ""}\n\nEmail: ${i.viewUrl || ""}\nPrep: open this job in your job tracker and tap Interview prep.`)}`,
+    "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Interview tomorrow", "TRIGGER:-PT24H", "END:VALARM",
+    "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Interview in 1 hour", "TRIGGER:-PT1H", "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR"];
+  return lines.join("\r\n");
+}
+
+async function acceptInvite(i, btn) {
+  const st = $("inv-" + i.id); btn.disabled = true;
+  try {
+    if (i.start) {
+      const blob = new Blob([icsFor(i)], { type: "text/calendar" });
+      const url = URL.createObjectURL(blob);
+      // Opening the .ics shows "Add to Calendar" on iPhone and Mac.
+      const a = document.createElement("a"); a.href = url; a.download = `Interview - ${i.company || "invite"}.ics`.replace(/[\\/:*?"<>|]/g, "");
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+    st.textContent = "Updating your tracker…";
+    const upd = { status: "interview", next: i.stage || "Interview", nextDate: i.start ? i.start.slice(0, 10) : "", updated: new Date().toISOString() };
+    let jobId = i.matchJobId && jobs.some(j => j.id === i.matchJobId) ? i.matchJobId : "";
+    if (jobId) await db.collection("jobs").doc(jobId).update(upd);
+    else { const ref = await db.collection("jobs").add({ title: i.role || "Role from email", company: i.company || "", location: i.location || "", url: "", description: "", visa: "now", pay: "", applied: "", notes: i.summary || "", created: upd.updated, ...upd }); jobId = ref.id; }
+    await db.collection("inbox").doc(i.id).update({ status: "added", matchJobId: jobId });
+    // The card re-renders when the inbox updates, so put the message somewhere that stays.
+    inboxMsg(i.start ? "Calendar invite opened. Tap Add to Calendar; it reminds you a day and an hour before." : "Added to your tracker. Add the time once it's confirmed.");
+  } catch (e) { st.textContent = "Couldn't finish (" + (e.code || e.message) + ")."; }
+  finally { btn.disabled = false; }
+}
+
+async function draftReply(i, btn) {
+  const st = $("inv-" + i.id);
+  if (!i.sender) { st.textContent = "Couldn't find who to reply to. Reply from Gmail instead."; return; }
+  btn.disabled = true; st.textContent = "Writing a reply…";
+  try {
+    const { text } = await sample(`Write a short, polite plain-text email reply from Sunil Dennis to this interview email. ${i.needsReply ? "They asked him to confirm or give availability: confirm warmly, and where times are needed write [ADD YOUR AVAILABILITY] for him to fill in." : "Confirm he will attend and thank them."} UK English, no subject line, no markdown, sign off "Kind regards,\\nSunil Dennis".\n\nEmail summary: ${i.summary}\nCompany: ${i.company}\nRole: ${i.role}\nWhen: ${i.start || "not fixed"}`);
+    const subject = /^re:/i.test(i.subject) ? i.subject : "Re: " + (i.subject || "Interview");
+    const mailto = `mailto:${i.sender.replace(/[^\w.@+-]/g, "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text.trim())}`;
+    await db.collection("inbox").doc(i.id).update({ draftUrl: mailto });
+    let copied = false; try { await navigator.clipboard.writeText(text.trim()); copied = true; } catch (e) {}
+    inboxMsg("Reply written. Tap Open draft reply, check it, and send it yourself." + (copied ? " It's also copied." : ""));
+  } catch (e) { st.textContent = e.code === "not_granted" ? "Add your free Gemini AI key in My CV › App connections, then try again." : "Couldn't write the reply (" + e.code + ")."; }
+  finally { btn.disabled = false; }
+}
+
+/* Re-check alerts whenever the app comes back to the front */
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && jobapp.gh.ready()) importAlerts(); });
+
+/* Offline support + install on the home screen */
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+/* --- start --- */
+const f0=load("jt-filter");if(f0)filter=f0;
+setTab(load("jt-tab")||"jobs");
+renderJobs();
+
+(async()=>{
+  const use=n=>window.claude?.use?.(n)?.catch?.(()=>null) ?? Promise.resolve(null);
+  [db,sample,downloads,mcp]=await Promise.all([use("db"),use("sample"),use("downloads"),use("mcp")]);
+  if(!db){$("list").replaceChildren(el("div","empty","Your jobs can't load in this view. Open the tracker in the Claude app while signed in."));$("addBtn").hidden=true;$("cvText").placeholder="Open in the Claude app to see your CV.";return}
+  setTab(tab);
+  db.collection("jobs").onSnapshot(snap=>{jobs=snap.docs.map(d=>({id:d.id,...d.data()}));showMsg("");render();if(!alertsChecked){alertsChecked=true;importAlerts()}},
+    err=>showMsg("Lost connection to your jobs ("+err.code+"). Reload to try again."));
+  db.collection("inbox").onSnapshot(snap=>{invites=snap.docs.map(d=>({id:d.id,...d.data()}));renderInbox()},()=>{});
+  db.doc("profile/cv").onSnapshot(s=>{cv=(s.exists&&s.data().text)||"";if(document.activeElement!==$("cvText"))$("cvText").value=cv;$("cvText").placeholder="Paste your full CV here."},()=>{});
+})();
+</script>
+</body>
+</html>
