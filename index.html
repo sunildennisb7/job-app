@@ -1016,6 +1016,198 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 /* Offline support + install on the home screen */
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+/* Board: every relevant UK tech posting and freelance project the bot found (data/board.json),
+   grouped by job title. Save any of them to your tracker with one tap. */
+const boardView = (() => {
+  const SOURCES = { reed: "Reed", adzuna: "Adzuna", linkedin: "LinkedIn", indeed: "Indeed", remotive: "Remotive",
+    jobicy: "Jobicy", himalayas: "Himalayas", remoteok: "Remote OK", weworkremotely: "We Work Remotely",
+    freelancer: "Freelancer.com", jooble: "Jooble" };
+  const NEAR_SHEFFIELD = /sheffield|rotherham|barnsley|doncaster|chesterfield|south yorkshire|leeds|wakefield/i;
+  const CACHE = "jobapp-board";
+  let items = [], loadedAt = 0, loading = null, mode = "jobs", shown = {};
+  const f = { q: "", where: "any", days: "any", visa: false, junior: false, source: "" };
+  try { const c = JSON.parse(localStorage.getItem(CACHE) || "null"); if (c && Array.isArray(c.items)) { items = c.items; loadedAt = c.at || 0; } } catch (e) {}
+  try { Object.assign(f, JSON.parse(localStorage.getItem(CACHE + "-filters") || "{}")); mode = localStorage.getItem(CACHE + "-mode") || "jobs"; } catch (e) {}
+  const saveFilters = () => { try { localStorage.setItem(CACHE + "-filters", JSON.stringify(f)); localStorage.setItem(CACHE + "-mode", mode); } catch (e) {} };
+
+  /* --- Tab + view --- */
+  const css = document.createElement("style");
+  css.textContent = `
+.tabs{grid-template-columns:repeat(5,minmax(0,1fr))!important}
+.tab{font-size:13px!important;padding:9px 2px!important}
+.bd-seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px}
+.bd-seg button{font:600 14px var(--f-body);border:0;border-radius:9px;padding:9px;background:transparent;color:var(--muted);cursor:pointer}
+.bd-seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--ink)}
+.bd-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.bd-filters input[type=search],.bd-filters select{font:inherit;font-size:14px;width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)}
+.bd-filters .full{grid-column:1/-1}
+.bd-filters label{display:flex!important;flex-direction:row!important;align-items:center;gap:8px;font-size:14px;color:var(--muted);margin:0!important}
+.bd-filters input[type=checkbox]{width:auto;margin:0}
+.bd-group{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.bd-group>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:12px 14px;font-weight:600}
+.bd-group>summary::-webkit-details-marker{display:none}
+.bd-group>summary::after{content:"▸";color:var(--muted);margin-left:8px;transition:transform .15s}
+.bd-group[open]>summary::after{transform:rotate(90deg)}
+.bd-group>summary span{margin-left:auto;font:500 13px var(--f-mono);color:var(--muted)}
+.bd-items{display:flex;flex-direction:column}
+.bd-item{border-top:1px solid var(--line);padding:10px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.bd-item .role{font-size:15px}
+.bd-item .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+.bd-src{font-size:11px;border:1px solid var(--line);border-radius:6px;padding:0 6px}
+.bd-more{border-top:1px solid var(--line);padding:8px 14px}
+`;
+  document.head.append(css);
+  const tabBtn = el("button", "tab", "Board"); tabBtn.type = "button"; tabBtn.id = "tab-board"; tabBtn.setAttribute("role", "tab");
+  $("tab-jobs").after(tabBtn);
+  $("tab-week").textContent = "Week";
+  const view = el("section"); view.id = "view-board"; view.hidden = true;
+  view.style.cssText = "flex-direction:column;gap:12px";
+  $("view-jobs").after(view);
+
+  view.innerHTML = `
+    <div class="alertbar"><span class="status" id="bd-msg"></span><button class="btn sm" id="bd-refresh" type="button">Refresh</button></div>
+    <div class="bd-seg" role="group" aria-label="Jobs or freelance">
+      <button type="button" id="bd-jobs">Jobs</button><button type="button" id="bd-free">Freelance</button>
+    </div>
+    <div class="bd-filters">
+      <input class="full" type="search" id="bd-q" placeholder="Search title, company or skill" aria-label="Search">
+      <select id="bd-where" aria-label="Where"><option value="any">Anywhere in the UK</option><option value="sheffield">Sheffield and nearby</option><option value="london">London</option><option value="remote">Remote</option></select>
+      <select id="bd-days" aria-label="Posted"><option value="any">Any time</option><option value="1">Last 24 hours</option><option value="3">Last 3 days</option><option value="7">Last 7 days</option></select>
+      <select id="bd-source" aria-label="Site"><option value="">All sites</option></select>
+      <label id="bd-visaWrap"><input type="checkbox" id="bd-visa"> Fits my visa now</label>
+      <label class="full"><input type="checkbox" id="bd-junior"> Junior and graduate only</label>
+    </div>
+    <p class="note" id="bd-note" hidden></p>
+    <div id="bd-list" style="display:flex;flex-direction:column;gap:10px"></div>
+    <p class="note">From Reed, Adzuna, LinkedIn, Indeed, Remotive, Jobicy, Himalayas, Remote OK, We Work Remotely and Freelancer.com. Tap Open to see the full advert on the site.</p>`;
+
+  const msg = t => { $("bd-msg").textContent = t || ""; };
+  const ago = d => { const n = Math.round((Date.parse(today()) - Date.parse(d)) / 864e5); return n <= 0 ? "Today" : n === 1 ? "Yesterday" : n + " days ago"; };
+  const inTracker = r => jobs.find(j => j.id === alertDocId(r.k) || (r.u && j.url === r.u));
+
+  function matches(r) {
+    if (mode === "free" ? !r.f : r.f) return false;
+    if (f.q) { const hay = `${r.t} ${r.c} ${r.l} ${r.x || ""}`.toLowerCase(); if (!f.q.toLowerCase().split(/\s+/).every(w => hay.includes(w))) return false; }
+    if (f.where === "sheffield" && !NEAR_SHEFFIELD.test(r.l)) return false;
+    if (f.where === "london" && !/london/i.test(r.l)) return false;
+    if (f.where === "remote" && !r.r) return false;
+    if (f.days !== "any" && Date.parse(today()) - Date.parse(r.d) > (+f.days) * 864e5) return false;
+    if (mode === "jobs" && f.visa && r.v !== "now") return false;
+    if (f.junior && !r.j) return false;
+    if (f.source && r.s !== f.source) return false;
+    return true;
+  }
+
+  function itemEl(r) {
+    const it = el("div", "bd-item");
+    const top = el("div", "top"); top.append(el("span", "role", r.t));
+    if (r.v === "now" && !r.f) top.append(Object.assign(el("span", "pill", "Visa ok"), { style: "--c:var(--now)" }));
+    it.append(top, el("span", "co", [r.c, r.l].filter(Boolean).join(" · ")));
+    const meta = el("div", "meta");
+    if (r.p) meta.append(el("span", "mono", r.p));
+    meta.append(el("span", null, ago(r.d)), el("span", "bd-src", SOURCES[r.s] || r.s));
+    if (r.m >= 35) meta.append(el("span", null, `CV match ${r.m}`));
+    it.append(meta);
+    if (r.x) { const x = el("span", "note", r.x.length >= 200 ? r.x + "…" : r.x); it.append(x); }
+    const acts = el("div", "acts");
+    if (r.u) { const a = el("a", "btn sm", "Open"); a.href = r.u; a.target = "_blank"; a.rel = "noopener noreferrer"; acts.append(a); }
+    const have = inTracker(r);
+    const save = el("button", "btn sm" + (have ? "" : " primary"), have ? "In your tracker" : "Save to tracker"); save.type = "button";
+    save.onclick = async () => {
+      const j = inTracker(r); if (j) { setTab("jobs"); openDetail(j.id); return; }
+      if (!db) return;
+      save.disabled = true; const now = new Date().toISOString(); const id = alertDocId(r.k);
+      try {
+        await db.collection("jobs").doc(id).set({ title: r.t, company: r.c, location: r.l, url: r.u, pay: r.p || "", visa: r.v === "now" ? "now" : "later",
+          description: r.x || "", status: "saved", next: r.f ? "Read the brief and decide whether to bid" : "Tailor CV and apply", nextDate: "",
+          notes: `From the Board (${SOURCES[r.s] || r.s})${r.f ? ", freelance" : ""}`, source: r.s, score: r.m ?? null, created: now, updated: now });
+        await db.collection("imports").doc(id).set({ at: now }).catch(() => {});
+        save.textContent = "Saved ✓"; save.classList.remove("primary");
+      } catch (e) { save.textContent = "Couldn't save"; }
+      finally { save.disabled = false; }
+    };
+    acts.append(save); it.append(acts);
+    return it;
+  }
+
+  function render() {
+    $("bd-jobs").setAttribute("aria-pressed", String(mode === "jobs")); $("bd-free").setAttribute("aria-pressed", String(mode === "free"));
+    $("bd-jobs").textContent = `Jobs (${items.filter(r => !r.f).length})`; $("bd-free").textContent = `Freelance (${items.filter(r => r.f).length})`;
+    $("bd-visaWrap").hidden = mode === "free";
+    if ($("bd-q").value.trim() !== f.q) $("bd-q").value = f.q; $("bd-where").value = f.where; $("bd-days").value = f.days; $("bd-visa").checked = f.visa; $("bd-junior").checked = f.junior;
+    const srcSel = $("bd-source"); const srcs = [...new Set(items.map(r => r.s))].sort();
+    srcSel.replaceChildren(new Option("All sites", ""), ...srcs.map(s => new Option(SOURCES[s] || s, s))); srcSel.value = srcs.includes(f.source) ? f.source : "";
+    const note = $("bd-note");
+    note.hidden = mode !== "free";
+    note.textContent = "Freelance work from anywhere in the world: software and web development, SAP, graphic design, and teaching those skills.";
+    $("bd-where").options[0].textContent = mode === "free" ? "Anywhere in the world" : "Anywhere in the UK";
+    const list = $("bd-list"); list.replaceChildren();
+    const show = items.filter(matches);
+    if (!items.length) { list.append(el("div", "empty", jobapp.gh.ready() ? "Nothing yet. The board fills after the bot's next run. Tap Refresh to check." : "Add your GitHub token in My CV › App connections to load the board.")); return; }
+    if (!show.length) { list.append(el("div", "empty", "No postings match these filters.")); return; }
+    const groups = new Map();
+    for (const r of show) { if (!groups.has(r.g)) groups.set(r.g, []); groups.get(r.g).push(r); }
+    const order = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+    order.forEach(([g, rows], i) => {
+      const d = el("details", "bd-group"); d.open = i === 0 || order.length <= 2;
+      const s = el("summary", null, g); s.append(el("span", null, String(rows.length))); d.append(s);
+      const box = el("div", "bd-items"); d.append(box);
+      const paint = () => {
+        box.replaceChildren();
+        const n = shown[g] || 15;
+        rows.slice(0, n).forEach(r => box.append(itemEl(r)));
+        if (rows.length > n) { const more = el("div", "bd-more"); const b = el("button", "btn sm", `Show ${Math.min(30, rows.length - n)} more`); b.type = "button";
+          b.onclick = () => { shown[g] = n + 30; paint(); }; more.append(b); box.append(more); }
+      };
+      d.addEventListener("toggle", () => { if (d.open && !box.childElementCount) paint(); });
+      if (d.open) paint();
+      list.append(d);
+    });
+  }
+
+  async function load(force) {
+    if (loading) return loading;
+    if (!jobapp.gh.ready()) { render(); return; }
+    if (!force && Date.now() - loadedAt < 10 * 60 * 1000 && items.length) { render(); return; }
+    loading = (async () => {
+      msg("Loading the board…"); $("bd-refresh").disabled = true;
+      try {
+        const file = await jobapp.gh.readFile("data/board.json");
+        items = file ? JSON.parse(file.text) : [];
+        loadedAt = Date.now();
+        try { localStorage.setItem(CACHE, JSON.stringify({ at: loadedAt, items })); } catch (e) {}
+        msg(`${items.length} postings · updated ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`);
+      } catch (e) { msg(e.code === "bad_github_token" ? "GitHub token not accepted." : "Couldn't reach GitHub. Showing the last copy."); }
+      finally { $("bd-refresh").disabled = false; loading = null; render(); }
+    })();
+    return loading;
+  }
+
+  /* --- Wiring --- */
+  $("bd-jobs").onclick = () => { mode = "jobs"; saveFilters(); render(); };
+  $("bd-free").onclick = () => { mode = "free"; saveFilters(); render(); };
+  let qTimer = null;
+  $("bd-q").oninput = e => { clearTimeout(qTimer); qTimer = setTimeout(() => { f.q = e.target.value.trim(); saveFilters(); render(); }, 250); };
+  for (const [id, key, prop] of [["bd-where", "where", "value"], ["bd-days", "days", "value"], ["bd-source", "source", "value"], ["bd-visa", "visa", "checked"], ["bd-junior", "junior", "checked"]])
+    $(id).onchange = e => { f[key] = e.target[prop]; saveFilters(); render(); };
+  $("bd-refresh").onclick = () => load(true);
+
+  const baseSetTab = setTab;
+  setTab = function (t) {
+    if (t !== "board") { view.hidden = true; tabBtn.setAttribute("aria-selected", "false"); return baseSetTab(t); }
+    tab = "board"; store("jt-tab", "board");
+    for (const k of ["jobs", "inbox", "week", "cv"]) { $("tab-" + k).setAttribute("aria-selected", "false"); $("view-" + k).hidden = true; }
+    tabBtn.setAttribute("aria-selected", "true"); view.hidden = false; view.style.display = "flex";
+    $("addBtn").hidden = true;
+    load(false);
+  };
+  tabBtn.onclick = () => setTab("board");
+  if (location.hash === "#board") store("jt-tab", "board");
+  return { load, render, get items() { return items; } };
+})();
+// Re-draw the board's "Saved" buttons when your tracker changes.
+{ const baseRenderAll = render; render = function () { baseRenderAll(); if (tab === "board") boardView.render(); }; }
+
 /* Voice assistant ("Jarvis"): tap the mic, speak, and it answers out loud.
    - Listening uses the browser's speech recognition (Safari and Chrome). Where that isn't available, type or use the keyboard's mic.
    - Speaking uses the device's own voices (a British voice when there is one).
@@ -1155,7 +1347,7 @@ Your answers are SPOKEN aloud, so:
 - Use only the data given for facts about his jobs and interviews. If something isn't there, say so.
 - You can coach him: practice questions, quick feedback, motivation, what to do next.
 - You never send emails or apply for jobs. If asked, say he can tap the buttons in the app and send it himself.
-Return JSON: {"say": what you will say, "action": null or one of {"type":"open_job","id": job id} | {"type":"tab","name":"jobs"|"inbox"|"week"|"cv"} | {"type":"filter","name":"new"|"saved"|"applied"|"interview"|"active"}}.
+Return JSON: {"say": what you will say, "action": null or one of {"type":"open_job","id": job id} | {"type":"tab","name":"jobs"|"board"|"inbox"|"week"|"cv"} (board = every UK posting and freelance project the bot found) | {"type":"filter","name":"new"|"saved"|"applied"|"interview"|"active"}}.
 Use an action only when he asks to open, show or go to something.`;
 
   function bubble(role, text) { const b = el("div", "bubble " + (role === "user" ? "me" : "them")); b.textContent = text; $("va-log").append(b); b.scrollIntoView({ block: "nearest" }); return b; }
@@ -1193,7 +1385,7 @@ Use an action only when he asks to open, show or go to something.`;
   function doAction(a) {
     if (!a || typeof a !== "object") return;
     if (a.type === "open_job" && jobs.some(j => j.id === a.id)) { setTab("jobs"); openDetail(a.id); }
-    else if (a.type === "tab" && ["jobs", "inbox", "week", "cv"].includes(a.name)) setTab(a.name);
+    else if (a.type === "tab" && ["jobs", "board", "inbox", "week", "cv"].includes(a.name)) setTab(a.name);
     else if (a.type === "filter" && typeof a.name === "string") { setTab("jobs"); filter = a.name; store("jt-filter", a.name); renderJobs(); }
   }
 
