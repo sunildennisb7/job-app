@@ -903,7 +903,8 @@ function importAlerts() {
         await db.collection("jobs").doc(id).set({ title: r.title || "", company: r.company || "", location: r.location || "", url: r.url || "",
           pay: r.pay || "", visa: r.visa === "later" ? "later" : "now", description: r.description || "", status: "new",
           next: "Tailor CV and apply", nextDate: "", notes: `From ${r.source || "job"} alert, match ${r.score ?? "?"}/100`,
-          source: r.source || "", score: r.score ?? null, created: now, updated: now });
+          source: r.source || "", score: r.score ?? null, created: now, updated: now,
+          ...(r.workType !== undefined ? { workType: r.workType || "", hours: r.hours ?? null, partTime: r.partTime || 0, flexible: r.flexible || 0 } : {}) });
         await db.collection("imports").doc(id).set({ at: now });
         added++;
       }
@@ -1018,6 +1019,58 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
 
 /* Board: every relevant UK tech posting and freelance project the bot found (data/board.json),
    grouped by job title. Save any of them to your tracker with one tap. */
+/* Contract type and hours a week. The bot tags board postings (w, h, q, fx); jobs in your tracker
+   and older postings are read from the advert text the same way as the bot's jobbot/worktype.py. */
+const workType = (() => {
+  const WEEK = String.raw`\s*(?:per|a|/|each|every|p\.?)\s*(?:week|wk)\b|\s*pw\b|\s*p/w\b|\s*weekly\b`;
+  const HOURS = new RegExp(String.raw`(\d{1,2}(?:\.\d{1,2})?)\s*(?:(?:-|–|to)\s*(\d{1,2}(?:\.\d{1,2})?)\s*)?(?:hours|hrs|hr|h)\b(?:` + WEEK + ")", "gi");
+  const DAYS = new RegExp(String.raw`\b([1-5](?:\.5)?)\s*(?:(?:-|–|to)\s*([1-5])\s*)?days?(?:` + WEEK + ")", "gi");
+  const CONTRACT = /\bcontract(or)?\b|fixed[- ]term|\bftc\b|\binterim\b|day rate|per day\b|\/day\b|\b(inside|outside) ir35\b|\bumbrella\b/i;
+  const TEMP = /\btemp\b|\btemporary\b|\bseasonal\b|zero[- ]hours?/i, PERM = /\bpermanent\b|\bperm\b/i;
+  const PART = /part[- ]time|\bp\/t\b/i, FULL = /full[- ]time|\bf\/t\b/i, FLEX = /flexible hours|hours to suit|choose your (own )?hours|work when you want/i;
+  function hoursIn(text) {
+    let best = null;
+    for (const m of text.matchAll(HOURS)) { const v = +(m[2] || m[1]); if (v >= 1 && v <= 60) best = Math.max(best || 0, v); }
+    if (best == null) for (const m of text.matchAll(DAYS)) best = Math.max(best || 0, +(m[2] || m[1]) * 7.5);
+    if (best == null) { const m = text.match(/\b(0\.\d{1,2})\s*fte\b/i); if (m) best = +m[1] * 37.5; }
+    return best == null ? null : Math.round(best * 10) / 10;
+  }
+  function classify(title, text, w, freelance) {
+    const all = `${title || ""} ${text || ""}`, head = `${title || ""} ${(text || "").slice(0, 600)}`;
+    w = freelance ? "freelance" : (w || "");
+    if (!w) w = PERM.test(title || "") ? "permanent" : CONTRACT.test(head) ? "contract" : TEMP.test(head) ? "temp" : PERM.test(head) ? "permanent" : "";
+    let h = hoursIn(all); const q = PART.test(all) || (h != null && h < 30);
+    if (h == null && !q && FULL.test(all)) h = 37.5;
+    if (q && h != null && h >= 35) h = null;
+    return { w, h, q: q ? 1 : 0, fx: FLEX.test(all) ? 1 : 0 };
+  }
+  // Board postings carry the bot's tags; tracker jobs keep theirs in workType/hours/partTime.
+  const ofBoard = r => "w" in r ? r : classify(r.t, r.x, "", r.f);
+  const ofJob = j => j.workType !== undefined && j.workType !== null
+    ? { w: j.workType, h: j.hours ?? null, q: j.partTime ? 1 : 0, fx: j.flexible ? 1 : 0 }
+    : classify(j.title, j.description, "", false);
+  /* Contract filter: any | contract (contract or temp) | parttime | permanent | freelance.
+     Hours filter: "" or 10/20/30/40 = fits within that many hours a week. Postings that don't give a number count as
+     full time (37.5 h), except part-time ones (shown from 20 h) and freelance or flexible ones (shown for any hours). */
+  function fits(x, work, hours) {
+    if (work === "contract" && !["contract", "temp", "freelance"].includes(x.w)) return false;
+    if (work === "parttime" && !x.q) return false;
+    if (work === "permanent" && x.w !== "permanent") return false;
+    if (work === "freelance" && x.w !== "freelance") return false;
+    if (!hours) return true;
+    const n = +hours;
+    if (x.h != null) return x.h <= n;
+    if (x.fx || x.w === "freelance") return true;
+    if (x.q) return n >= 20;
+    return n >= 40;
+  }
+  const LABEL = { contract: "Contract", temp: "Temporary", permanent: "Permanent", freelance: "Freelance" };
+  const label = x => [LABEL[x.w], x.q && !x.h ? "Part-time" : "", x.h ? `${x.h} h/week` : "", x.fx ? "Flexible hours" : ""].filter(Boolean).join(" · ");
+  const WORK_OPTS = [["any", "Any contract"], ["contract", "Contract or temp"], ["parttime", "Part-time"], ["permanent", "Permanent"]];
+  const HOUR_OPTS = [["", "Any hours"], ["10", "Up to 10 h a week"], ["20", "Up to 20 h a week"], ["30", "Up to 30 h a week"], ["40", "Up to 40 h a week"]];
+  return { classify, ofBoard, ofJob, fits, label, WORK_OPTS, HOUR_OPTS };
+})();
+
 const boardView = (() => {
   const SOURCES = { reed: "Reed", adzuna: "Adzuna", linkedin: "LinkedIn", indeed: "Indeed", remotive: "Remotive",
     jobicy: "Jobicy", himalayas: "Himalayas", remoteok: "Remote OK", weworkremotely: "We Work Remotely",
@@ -1025,7 +1078,7 @@ const boardView = (() => {
   const NEAR_SHEFFIELD = /sheffield|rotherham|barnsley|doncaster|chesterfield|south yorkshire|leeds|wakefield/i;
   const CACHE = "jobapp-board";
   let items = [], loadedAt = 0, loading = null, mode = "jobs", shown = {};
-  const f = { q: "", where: "any", days: "any", visa: false, junior: false, source: "" };
+  const f = { q: "", where: "any", days: "any", visa: false, junior: false, source: "", work: "any", hours: "" };
   try { const c = JSON.parse(localStorage.getItem(CACHE) || "null"); if (c && Array.isArray(c.items)) { items = c.items; loadedAt = c.at || 0; } } catch (e) {}
   try { Object.assign(f, JSON.parse(localStorage.getItem(CACHE + "-filters") || "{}")); mode = localStorage.getItem(CACHE + "-mode") || "jobs"; } catch (e) {}
   const saveFilters = () => { try { localStorage.setItem(CACHE + "-filters", JSON.stringify(f)); localStorage.setItem(CACHE + "-mode", mode); } catch (e) {} };
@@ -1074,6 +1127,8 @@ const boardView = (() => {
       <select id="bd-where" aria-label="Where"><option value="any">Anywhere in the UK</option><option value="sheffield">Sheffield and nearby</option><option value="london">London</option><option value="remote">Remote</option></select>
       <select id="bd-days" aria-label="Posted"><option value="any">Any time</option><option value="1">Last 24 hours</option><option value="3">Last 3 days</option><option value="7">Last 7 days</option></select>
       <select id="bd-source" aria-label="Site"><option value="">All sites</option></select>
+      <select id="bd-work" aria-label="Contract type">${workType.WORK_OPTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
+      <select id="bd-hours" aria-label="Hours a week">${workType.HOUR_OPTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
       <label id="bd-visaWrap"><input type="checkbox" id="bd-visa"> Fits my visa now</label>
       <label class="full"><input type="checkbox" id="bd-junior"> Junior and graduate only</label>
     </div>
@@ -1083,6 +1138,7 @@ const boardView = (() => {
 
   const msg = t => { $("bd-msg").textContent = t || ""; };
   const ago = d => { const n = Math.round((Date.parse(today()) - Date.parse(d)) / 864e5); return n <= 0 ? "Today" : n === 1 ? "Yesterday" : n + " days ago"; };
+  const boardWork = r => { const x = workType.ofBoard(r); return { workType: x.w || "", hours: x.h ?? null, partTime: x.q || 0, flexible: x.fx || 0 }; };
   const inTracker = r => jobs.find(j => j.id === alertDocId(r.k) || (r.u && j.url === r.u));
 
   function matches(r) {
@@ -1095,6 +1151,7 @@ const boardView = (() => {
     if (mode === "jobs" && f.visa && r.v !== "now") return false;
     if (f.junior && !r.j) return false;
     if (f.source && r.s !== f.source) return false;
+    if ((f.work !== "any" || f.hours) && !workType.fits(workType.ofBoard(r), mode === "free" ? "any" : f.work, f.hours)) return false;
     return true;
   }
 
@@ -1105,6 +1162,7 @@ const boardView = (() => {
     it.append(top, el("span", "co", [r.c, r.l].filter(Boolean).join(" · ")));
     const meta = el("div", "meta");
     if (r.p) meta.append(el("span", "mono", r.p));
+    const wl = workType.label(workType.ofBoard(r)); if (wl && !(r.f && wl === "Freelance")) meta.append(el("span", null, wl));
     meta.append(el("span", null, ago(r.d)), el("span", "bd-src", SOURCES[r.s] || r.s));
     if (r.m >= 35) meta.append(el("span", null, `CV match ${r.m}`));
     it.append(meta);
@@ -1120,7 +1178,7 @@ const boardView = (() => {
       try {
         await db.collection("jobs").doc(id).set({ title: r.t, company: r.c, location: r.l, url: r.u, pay: r.p || "", visa: r.v === "now" ? "now" : "later",
           description: r.x || "", status: "saved", next: r.f ? "Read the brief and decide whether to bid" : "Tailor CV and apply", nextDate: "",
-          notes: `From the Board (${SOURCES[r.s] || r.s})${r.f ? ", freelance" : ""}`, source: r.s, score: r.m ?? null, created: now, updated: now });
+          notes: `From the Board (${SOURCES[r.s] || r.s})${r.f ? ", freelance" : ""}`, source: r.s, score: r.m ?? null, ...boardWork(r), created: now, updated: now });
         await db.collection("imports").doc(id).set({ at: now }).catch(() => {});
         save.textContent = "Saved ✓"; save.classList.remove("primary");
       } catch (e) { save.textContent = "Couldn't save"; }
@@ -1139,7 +1197,7 @@ const boardView = (() => {
     const now = new Date().toISOString(); const id = alertDocId(r.k);
     await db.collection("jobs").doc(id).set({ title: r.t, company: r.c, location: r.l, url: r.u, pay: r.p || "", visa: r.v === "now" ? "now" : "later",
       description: r.x || "", status: "saved", next: r.f ? "Check the proposal and send your bid" : "Tailor CV and apply", nextDate: "",
-      notes: `From the Board (${SOURCES[r.s] || r.s})${r.f ? ", freelance" : ""}`, source: r.s, score: r.m ?? null, created: now, updated: now, ...(extra || {}) });
+      notes: `From the Board (${SOURCES[r.s] || r.s})${r.f ? ", freelance" : ""}`, source: r.s, score: r.m ?? null, ...boardWork(r), created: now, updated: now, ...(extra || {}) });
     await db.collection("imports").doc(id).set({ at: now }).catch(() => {});
     return id;
   }
@@ -1219,6 +1277,7 @@ ${cv.slice(0, 9000)}`;
     $("bd-jobs").textContent = `Jobs (${items.filter(r => !r.f).length})`; $("bd-free").textContent = `Freelance (${items.filter(r => r.f).length})`;
     $("bd-visaWrap").hidden = mode === "free";
     if ($("bd-q").value.trim() !== f.q) $("bd-q").value = f.q; $("bd-where").value = f.where; $("bd-days").value = f.days; $("bd-visa").checked = f.visa; $("bd-junior").checked = f.junior;
+    $("bd-work").value = f.work; $("bd-hours").value = f.hours; $("bd-work").hidden = mode === "free";
     const srcSel = $("bd-source"); const srcs = [...new Set(items.map(r => r.s))].sort();
     srcSel.replaceChildren(new Option("All sites", ""), ...srcs.map(s => new Option(SOURCES[s] || s, s))); srcSel.value = srcs.includes(f.source) ? f.source : "";
     const note = $("bd-note");
@@ -1272,7 +1331,7 @@ ${cv.slice(0, 9000)}`;
   $("bd-free").onclick = () => { mode = "free"; saveFilters(); render(); };
   let qTimer = null;
   $("bd-q").oninput = e => { clearTimeout(qTimer); qTimer = setTimeout(() => { f.q = e.target.value.trim(); saveFilters(); render(); }, 250); };
-  for (const [id, key, prop] of [["bd-where", "where", "value"], ["bd-days", "days", "value"], ["bd-source", "source", "value"], ["bd-visa", "visa", "checked"], ["bd-junior", "junior", "checked"]])
+  for (const [id, key, prop] of [["bd-where", "where", "value"], ["bd-days", "days", "value"], ["bd-source", "source", "value"], ["bd-work", "work", "value"], ["bd-hours", "hours", "value"], ["bd-visa", "visa", "checked"], ["bd-junior", "junior", "checked"]])
     $(id).onchange = e => { f[key] = e.target[prop]; saveFilters(); render(); };
   $("bd-refresh").onclick = () => load(true);
 
@@ -1291,6 +1350,26 @@ ${cv.slice(0, 9000)}`;
 })();
 // Re-draw the board's "Saved" buttons when your tracker changes.
 { const baseRenderAll = render; render = function () { baseRenderAll(); if (tab === "board") boardView.render(); }; }
+
+/* Contract and Hours filters on the Jobs tab, under the stage chips. */
+{
+  let jw = { work: "any", hours: "" };
+  try { Object.assign(jw, JSON.parse(localStorage.getItem("jt-work") || "{}")); } catch (e) {}
+  const row = el("div", "bd-filters"); row.id = "jobs-work";
+  row.innerHTML = `<select id="jw-work" aria-label="Contract type">${workType.WORK_OPTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
+    <select id="jw-hours" aria-label="Hours a week">${workType.HOUR_OPTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>`;
+  $("chips").after(row);
+  $("jw-work").value = jw.work; $("jw-hours").value = jw.hours;
+  for (const [id, key] of [["jw-work", "work"], ["jw-hours", "hours"]])
+    $(id).onchange = e => { jw[key] = e.target.value; try { localStorage.setItem("jt-work", JSON.stringify(jw)); } catch (e2) {} renderJobs(); };
+  const baseVisible = visible;
+  visible = function () {
+    const v = baseVisible();
+    return jw.work === "any" && !jw.hours ? v : v.filter(j => workType.fits(workType.ofJob(j), jw.work, jw.hours));
+  };
+  const baseCardMeta = cardMeta;
+  cardMeta = function (j) { const m = baseCardMeta(j); const l = workType.label(workType.ofJob(j)); if (l) m.append(el("span", null, l)); return m; };
+}
 
 /* Voice assistant ("Jarvis"): tap the mic, speak, and it answers out loud.
    - Listening uses the browser's speech recognition (Safari and Chrome). Where that isn't available, type or use the keyboard's mic.
