@@ -286,13 +286,20 @@
       generationConfig: { maxOutputTokens: 8192, temperature: json ? 0.2 : 0.6, ...(json ? { responseMimeType: "application/json" } : {}) },
     };
     const stream = !json && typeof opts.onText === "function";
+    // Flash models "think" before writing. A long silent think made iPhone drop the connection, so keep thinking
+    // short and stream its summaries, which keeps data flowing. Turned off for good if this model rejects it.
+    if (LS.get("jobapp-no-thinking") !== "1") {
+      body.generationConfig.thinkingConfig = stream ? { thinkingBudget: 1024, includeThoughts: true } : { thinkingBudget: json ? 0 : 1024 };
+    }
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(s.model || DEFAULTS.model)}:${stream ? "streamGenerateContent?alt=sse" : "generateContent"}`;
     let res;
     try {
       res = await fetch(url, { method: "POST", signal: opts.signal, headers: { "Content-Type": "application/json", "x-goog-api-key": s.geminiKey }, body: JSON.stringify(body) });
     } catch (e) {
       if (e.name === "AbortError") throw err("cancelled");
-      throw err("offline", "No connection");
+      // A dropped connection (common on iPhone when the network changes): try once more before giving up.
+      if (!opts._net && navigator.onLine !== false) { await new Promise(r => setTimeout(r, 2000)); return gemini(input, { ...opts, _net: true }, json, retried); }
+      throw err(navigator.onLine === false ? "offline" : "interrupted", "No connection");
     }
     const googleSays = async () => { try { return ((await res.clone().json()).error.message || "").slice(0, 300); } catch (e) { return ""; } };
     // 429 is a quota limit on this key, not a busy server. The free tier allows only a few requests a minute:
@@ -320,6 +327,10 @@
     }
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       const msg = await googleSays();
+      if (res.status === 400 && body.generationConfig.thinkingConfig && /think/i.test(msg)) {
+        LS.set("jobapp-no-thinking", "1");
+        return gemini(input, opts, json, retried);
+      }
       const e = err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg); e.status = res.status; throw e;
     }
     // Google's free tier is sometimes overloaded: wait and try again, then try another Flash model.
@@ -361,7 +372,11 @@
             if (line.startsWith("data:")) { try { take(JSON.parse(line.slice(5))); opts.onText({ text }); } catch (e) {} }
           }
         }
-      } catch (e) { if (e.name === "AbortError") throw err("cancelled"); throw err("interrupted"); }
+      } catch (e) {
+        if (e.name === "AbortError") throw err("cancelled");
+        if (!text && !opts._net) { await new Promise(r => setTimeout(r, 2000)); return gemini(input, { ...opts, _net: true }, json, retried); }
+        const x = err("interrupted"); x.text = text; throw x;
+      }
     } else {
       take(await res.json());
     }

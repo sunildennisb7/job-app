@@ -740,7 +740,7 @@ async function generate(kind){
   }catch(e){
     if(e.code==="cancelled"){$("d-live").hidden=true}
     else{if(e.text)renderMd(out,e.text);title.textContent=k.label;
-      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?"Your free AI limit is used up for now. Try again later, or see My CV › App connections.":e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":"Couldn't finish writing ("+e.code+"). Try again.")}
+      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?"Your free AI limit is used up for now. Try again later, or see My CV › App connections.":e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+"). Try again.")}
   }finally{document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
 }
 document.querySelectorAll(".tools .btn").forEach(b=>b.onclick=()=>generate(b.dataset.kind));
