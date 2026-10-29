@@ -285,13 +285,18 @@
       contents: toContents(input),
       generationConfig: { maxOutputTokens: 8192, temperature: json ? 0.2 : 0.6, ...(json ? { responseMimeType: "application/json" } : {}) },
     };
-    const stream = !json && typeof opts.onText === "function";
-    // Flash models "think" before writing. A long silent think made iPhone drop the connection, so keep thinking
-    // short and stream its summaries, which keeps data flowing. Turned off for good if this model rejects it.
-    if (LS.get("jobapp-no-thinking") !== "1") {
-      body.generationConfig.thinkingConfig = stream ? { thinkingBudget: 1024, includeThoughts: true } : { thinkingBudget: json ? 0 : 1024 };
-    }
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(s.model || DEFAULTS.model)}:${stream ? "streamGenerateContent?alt=sse" : "generateContent"}`;
+    const stream = typeof opts.onText === "function";
+    // Quick jobs (like picking what to change in a CV) use Google's faster Flash-Lite model when this key has it.
+    const lite = opts.modelTier === "quick" && !opts._noLite && LS.get("jobapp-no-lite") !== "1";
+    const model = lite ? "gemini-flash-lite-latest" : (s.model || DEFAULTS.model);
+    // Flash models "think" before writing, which is slow, and a long silent think made iPhone drop the connection.
+    // Keep thinking short (none for quick jobs) and stream its summaries so data keeps flowing.
+    // Older models take a token budget, newer ones a level; whichever this model rejects is remembered.
+    const tmode = opts._tmode || LS.get("jobapp-thinking-mode") || "budget";
+    const quick = json || opts.modelTier === "quick";
+    if (tmode === "budget") body.generationConfig.thinkingConfig = { thinkingBudget: quick ? 0 : 1024, ...(stream && !quick ? { includeThoughts: true } : {}) };
+    else if (tmode === "level") body.generationConfig.thinkingConfig = { thinkingLevel: quick ? "minimal" : "low", ...(stream && !quick ? { includeThoughts: true } : {}) };
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:${stream ? "streamGenerateContent?alt=sse" : "generateContent"}`;
     let res;
     try {
       res = await fetch(url, { method: "POST", signal: opts.signal, headers: { "Content-Type": "application/json", "x-goog-api-key": s.geminiKey }, body: JSON.stringify(body) });
@@ -304,6 +309,7 @@
     const googleSays = async () => { try { return ((await res.clone().json()).error.message || "").slice(0, 300); } catch (e) { return ""; } };
     // 429 is a quota limit on this key, not a busy server. The free tier allows only a few requests a minute:
     // when Google says "retry in Ns", wait that long once. Otherwise (daily limit) try one other Flash model.
+    if (res.status === 429 && lite) return gemini(input, { ...opts, _noLite: true }, json, retried);
     if (res.status === 429) {
       let body = {}; try { body = await res.clone().json(); } catch (e) {}
       const msg = ((body.error && body.error.message) || "").slice(0, 300);
@@ -327,13 +333,18 @@
     }
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       const msg = await googleSays();
+      if (res.status === 400 && lite && /model/i.test(msg) && !/think/i.test(msg)) {
+        return gemini(input, { ...opts, _noLite: true }, json, retried);
+      }
       if (res.status === 400 && body.generationConfig.thinkingConfig && /think/i.test(msg)) {
-        LS.set("jobapp-no-thinking", "1");
-        return gemini(input, opts, json, retried);
+        const next = tmode === "budget" ? "level" : "none";
+        if (!lite) LS.set("jobapp-thinking-mode", next);
+        return gemini(input, { ...opts, _tmode: next }, json, retried);
       }
       const e = err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg); e.status = res.status; throw e;
     }
     // Google's free tier is sometimes overloaded: wait and try again, then try another Flash model.
+    if ((res.status === 503 || res.status === 500) && lite) return gemini(input, { ...opts, _noLite: true }, json, retried);
     if ((res.status === 503 || res.status === 500) && (opts._busy || 0) < 3 && !(opts.signal && opts.signal.aborted)) {
       const n = (opts._busy || 0) + 1;
       if (n === 3) {
@@ -344,6 +355,7 @@
       return gemini(input, { ...opts, _busy: n }, json, retried);
     }
     if (res.status === 503 || res.status === 500) { const e = err("rate_limited", await googleSays()); e.status = res.status; throw e; }
+    if (res.status === 404 && lite) { LS.set("jobapp-no-lite", "1"); return gemini(input, { ...opts, _noLite: true }, json, retried); }
     if (res.status === 404 && !retried) {
       const model = await pickModel(s.geminiKey).catch(() => null);
       if (model && model !== s.model) {
@@ -385,7 +397,7 @@
   }
   const sample = (input, opts) => gemini(input, opts, false);
   sample.json = async (input, opts) => {
-    const { text } = await gemini(input, opts, true);
+    const { text } = await gemini(input, opts || {}, true);
     const clean = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
     try { return JSON.parse(clean); } catch (e) { throw err("bad_json", "The AI reply wasn't valid JSON"); }
   };

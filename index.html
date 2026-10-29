@@ -112,6 +112,17 @@ textarea.cv{min-height:60vh;font:13px/1.5 var(--f-mono)}
 .out a{color:var(--accent)}
 .out-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 .out-head b{font-size:14px}
+.ring-wrap{display:flex;align-items:center;gap:10px;min-width:0}
+.ring{position:relative;width:44px;height:44px;flex:none}
+.ring svg{width:44px;height:44px;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:3.2}
+.ring .bg{stroke:var(--line)}
+.ring .fg{stroke:var(--accent);stroke-linecap:round;transition:stroke-dasharray .3s ease}
+.ring span{position:absolute;inset:0;display:grid;place-items:center;font:600 11px var(--f-body);color:var(--ink)}
+.ring.wait svg{animation:ringspin 1.4s linear infinite}
+@keyframes ringspin{from{transform:rotate(-90deg)}to{transform:rotate(270deg)}}
+@media (prefers-reduced-motion:reduce){.ring.wait svg{animation:none}}
+.ring-sub{font-size:12px;color:var(--muted)}
 .chat{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--bg)}
 .bubble{border-radius:10px;padding:8px 12px;max-width:92%;font-size:14px;overflow-wrap:anywhere;min-width:0}
 .bubble.them{background:var(--surface);border:1px solid var(--line);align-self:flex-start}
@@ -204,7 +215,7 @@ html,body{margin:0}
     <p class="note" id="d-newNote" hidden>New from your job alerts. Tap Tailor CV or Tailor cover letter, and download them as Word or PDF when they're ready.</p>
     <p class="note" id="d-aiNote" hidden></p>
     <div id="d-live" hidden>
-      <div class="out-head"><b id="d-liveTitle"></b><button class="btn sm" id="d-stop" type="button">Stop</button></div>
+      <div class="out-head"><div class="ring-wrap"><div class="ring" id="d-ring" role="progressbar" aria-valuemin="0" aria-valuemax="100"><svg viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9155"/><circle class="fg" id="d-ringFg" cx="18" cy="18" r="15.9155" stroke-dasharray="0 100"/></svg><span id="d-ringPct">0%</span></div><div style="min-width:0"><b id="d-liveTitle"></b><div class="ring-sub" id="d-ringSub"></div></div></div><button class="btn sm" id="d-stop" type="button">Stop</button></div>
       <div class="out" id="d-liveOut"></div>
     </div>
     <div id="d-saved" style="display:flex;flex-direction:column;gap:8px"></div>
@@ -746,7 +757,7 @@ function cvTrimOne(md){
   const p=cvParse(md);if(!p)return null;
   const cands=p.blocks.filter(b=>/EXPERIENCE|PROJECT/.test(b.sec)&&b.bullets.length>2);if(!cands.length)return null;
   const b=cands[cands.length-1];const lines=[...p.lines];lines.splice(b.bullets[b.bullets.length-1].i,1);return lines.join("\n")}
-async function tailorCvFast(j,p,signal){
+async function tailorCvFast(j,p,signal,onText){
   const listed=p.blocks.filter(b=>b.bullets.length).map(b=>`${b.id} ${b.title}\n${b.bullets.map((x,k)=>`  ${k+1}. ${x.text}`).join("\n")}`).join("\n");
   const skills=p.skills.map(s=>`${s.cat}: ${s.items.join(", ")}`).join("\n");
   const gig=/freelance/i.test(j.notes||"")||j.workType==="freelance";
@@ -767,9 +778,19 @@ ${skills}
 BLOCKS AND BULLETS:
 ${listed}
 
-${jobBlock(j)}`,{signal,modelTier:"quick",cache:false});
+${jobBlock(j)}`,{signal,modelTier:"quick",cache:false,...(onText?{onText}:{})});
   const keywords=[...new Set((r&&r.keywords||[]).map(x=>String(x).trim()).filter(Boolean))].slice(0,15);
   return {text:cvAssemble(p,r||{}),keywords}}
+/* Progress ring while the AI writes: real progress from the text streamed so far, a slow creep while it thinks. */
+let ringTimer=null,ringStart=0,ringVal=0;
+function ring(pct,label){ringVal=Math.max(ringVal,Math.min(100,pct));const fg=$("d-ringFg");if(!fg)return;
+  fg.setAttribute("stroke-dasharray",`${ringVal.toFixed(1)} 100`);$("d-ringPct").textContent=Math.round(ringVal)+"%";$("d-ring").setAttribute("aria-valuenow",String(Math.round(ringVal)));
+  if(label)$("d-liveTitle").textContent=label}
+function ringBegin(){ringVal=0;ringStart=Date.now();clearInterval(ringTimer);ring(0);
+  ringTimer=setInterval(()=>{const s=Math.round((Date.now()-ringStart)/1000);$("d-ringSub").textContent=`${s}s`},500)}
+function ringCreep(to){$("d-ring").classList.add("wait");clearInterval(ringCreep.t);ringCreep.t=setInterval(()=>ring(ringVal+(to-ringVal)*0.05),300)}
+function ringStream(len,expected,from,to){clearInterval(ringCreep.t);$("d-ring").classList.remove("wait");ring(from+(to-from)*Math.min(1,len/expected))}
+function ringEnd(){clearInterval(ringTimer);clearInterval(ringCreep.t);$("d-ring").classList.remove("wait")}
 async function generate(kind){
   const j=current();if(!j)return;
   if(!sample){aiNote("Writing isn't available in this view. Open the tracker in the Claude app.");return}
@@ -778,24 +799,27 @@ async function generate(kind){
   aiNote("");const k=KINDS[kind];
   ctl?.abort();ctl=new AbortController();const myCtl=ctl;
   document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=true);
-  $("d-live").hidden=false;const title=$("d-liveTitle");
+  $("d-live").hidden=false;const title=$("d-liveTitle");ringBegin();
   const out=$("d-liveOut");
   try{
     let keywords=[],text="",truncated=false;const parsed=kind==="cv"?cvParse(cv):null;
     if(parsed){
-      title.textContent="Tailoring your CV…";out.textContent="Picking what to bring forward for this job. This usually takes 10-30 seconds.";
-      ({text,keywords}=await tailorCvFast(j,parsed,myCtl.signal));
+      title.textContent="Tailoring your CV…";out.textContent="Picking what to bring forward for this job.";
+      const expected=900+p0len(parsed);ringCreep(35);
+      ({text,keywords}=await tailorCvFast(j,parsed,myCtl.signal,({text})=>{ringStream(text.length,expected,35,90);out.textContent=`Writing changes… ${text.length} characters so far`}));
+      ring(90,"Building your CV…");
       if(!keywords.length&&j.keywords)keywords=j.keywords;j.keywords=keywords;renderMd(out,text);
     }else{
       if(kind==="cv"){title.textContent="Reading the advert for ATS keywords…";out.textContent="Finding what the employer's screening software looks for.";keywords=await advertKeywords(j,myCtl.signal);j.keywords=keywords}
       title.textContent="Writing your "+k.label.toLowerCase()+"…";out.textContent="Thinking… this usually takes under a minute.";
-      ({text,truncated}=await sample(prompt(kind,j),{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)}));
+      const expected=kind==="cv"?Math.max(3000,cv.length):kind==="letter"?2000:7000;ringCreep(25);
+      ({text,truncated}=await sample(prompt(kind,j),{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>{ringStream(text.length,expected,25,92);renderMd(out,text)}}));
     }
     const data={[k.field]:text};if(parsed&&keywords.length)data.keywords=keywords;
     if(kind==="cv"){
       let pages=null;
       try{
-        title.textContent="Checking it fits on 2 pages…";
+        ring(94,"Checking it fits on 2 pages…");
         pages=(await buildCvPdf(text,"check")).pages;
         // Fast path: drop the least relevant bullets until it fits (instant, no AI call).
         for(let tries=0;parsed&&pages>2&&tries<6;tries++){const t=cvTrimOne(text);if(!t)break;text=t;pages=(await buildCvPdf(text,"check")).pages}
@@ -810,6 +834,7 @@ async function generate(kind){
       if(pages>2)aiNote("Still a bit over 2 pages. Tap Write again, or trim a bullet or two in Word.");
       if(pages==null)aiNote("Couldn't check the page count (no connection to the PDF tool). The text aims for 2 pages.")}
     if(j.status==="new")data.status="saved";
+    ring(100,"Done");
     openKind=kind;
     await patch(j.id,data);
     $("d-live").hidden=true;
@@ -819,8 +844,9 @@ async function generate(kind){
     if(e.code==="cancelled"){$("d-live").hidden=true}
     else{if(e.text)renderMd(out,e.text);title.textContent=k.label;
       aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?"Your free AI limit is used up for now. Try again later, or see My CV › App connections.":e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+"). Try again.")}
-  }finally{document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
+  }finally{ringEnd();document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
 }
+const p0len=p=>p.summary.reduce((n,i)=>n+p.lines[i].length,0)+p.skills.reduce((n,x)=>n+p.lines[x.i].length,0);
 document.querySelectorAll(".tools .btn").forEach(b=>b.onclick=()=>generate(b.dataset.kind));
 $("d-stop").onclick=()=>ctl?.abort();
 
