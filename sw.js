@@ -1,7 +1,8 @@
 /* Offline support: the app shell is cached; your data and AI calls always go to the network. */
-const CACHE = "job-assistant-v9";
+const CACHE = "job-assistant-v10";
 const SHELL = ["./", "index.html", "standalone.js", "manifest.webmanifest",
-  "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
+  "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png",
+  "fonts/Carlito-Regular.ttf", "fonts/Carlito-Bold.ttf", "fonts/Carlito-Italic.ttf"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

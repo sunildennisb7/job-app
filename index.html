@@ -363,6 +363,122 @@ async function buildDocx(md,title){
   z.file("word/document.xml",document_);z.file("word/styles.xml",styles);z.file("word/numbering.xml",numbering);
   return z.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"})}
 
+/* --- Tailored CV files in the same design as Sunil's own CV: Calibri (Carlito), blue name and section headings with a
+   blue rule, "Title | Company" with the company in blue, grey italic place and dates, a name footer on each page. --- */
+const CV_BLUE="1F4E9A",CV_GREY="555555";
+const cvRgb=h=>[0,2,4].map(i=>parseInt(h.slice(i,i+2),16));
+function cvRuns(t){const out=[];const re=/\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^)\s]+)\)/g;let last=0,m;
+  while((m=re.exec(t))){if(m.index>last)out.push({t:t.slice(last,m.index)});
+    out.push(m[1]!=null?{t:m[1],b:true}:m[2]!=null?{t:m[2],i:true}:{t:m[3],link:m[4]});last=m.index+m[0].length}
+  if(last<t.length)out.push({t:t.slice(last)});return out.filter(r=>r.t)}
+function cvBlocks(md){
+  const blocks=[];let inHead=false,headN=0;
+  for(const raw of md.replace(/\r/g,"").split("\n")){const line=raw.trim();if(!line||/^(-{3,}|\*{3,}|_{3,})$/.test(line))continue;
+    const h=line.match(/^(#{1,3})\s+(.*)/),li=line.match(/^[-*•]\s+(.*)/),meta=line.match(/^[*_](?![*_])(.+?)[*_]$/);
+    if(h){const type="h"+h[1].length;inHead=type==="h1";blocks.push({type,runs:cvRuns(h[2].replace(/\*\*/g,""))});continue}
+    if(inHead){blocks.push({type:headN++===0&&blocks.length===1?"headline":"contact",runs:cvRuns(line)});continue}
+    if(li){blocks.push({type:"li",runs:cvRuns(li[1])});continue}
+    if(meta&&!/\*\*/.test(line)){blocks.push({type:"meta",runs:[{t:meta[1]}]});continue}
+    const runs=cvRuns(line);blocks.push({type:runs[0]&&runs[0].b&&/:\s*$/.test(runs[0].t)?"skill":"p",runs})}
+  // "Role | Company": the part after the first " | " is blue, like the original.
+  for(const b of blocks)if(b.type==="h3"){const all=b.runs.map(r=>r.t).join("");const k=all.indexOf(" | ");
+    b.runs=k>0?[{t:all.slice(0,k)},{t:all.slice(k),c:CV_BLUE}]:[{t:all}]}
+  return blocks}
+const cvTitleCase=t=>t.split(/(\s+)/).map(w=>/^[A-Z][A-Z]+$/.test(w)&&w.length>3?w[0]+w.slice(1).toLowerCase():w).join("");
+function cvFooter(blocks){
+  const name=(blocks.find(b=>b.type==="h1")||{runs:[{t:"Sunil Dennis"}]}).runs.map(r=>r.t).join("");
+  const hl=blocks.find(b=>b.type==="headline");const role=hl?hl.runs.map(r=>r.t).join("").split("|")[0].trim():"";
+  const nm=name===name.toUpperCase()?name.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()):name;
+  return role?`${nm} | ${role===role.toUpperCase()?cvTitleCase(role):role}`:nm}
+// Sizes and gaps in points, measured from Sunil's CV (A4, 51pt side margins, 10.5pt body).
+const CV_ST={
+  h1:{size:22,b:1,c:CV_BLUE,center:1,lh:26.4,after:1},
+  headline:{size:12,b:1,center:1,caps:1,lh:15.6,after:1.8},
+  contact:{size:10.5,center:1,lh:13.7},
+  h2:{size:11,b:1,c:CV_BLUE,caps:1,before:8.8,lh:14.3,after:4.9,rule:1,keep:40},
+  h3:{size:10.5,b:1,before:4.8,lh:13.5,keep:30},
+  meta:{size:9.5,i:1,c:CV_GREY,lh:15.2},
+  li:{size:10.5,lh:14.1,indent:15.5},
+  skill:{size:10.5,lh:14.75},
+  p:{size:10.5,lh:13.8}};
+let cvFontData=null;
+async function loadCvFonts(){
+  if(cvFontData)return cvFontData;
+  try{const get=async n=>{const r=await fetch("fonts/Carlito-"+n+".ttf");if(!r.ok)throw new Error("font");const u=new Uint8Array(await r.arrayBuffer());
+      let s="";for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return s};
+    const [normal,bold,italic]=await Promise.all(["Regular","Bold","Italic"].map(get));return cvFontData={normal,bold,italic}}
+  catch(e){return null}}
+async function buildCvPdf(md,title){
+  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+  const doc=new window.jspdf.jsPDF({unit:"pt",format:"a4"});doc.setProperties({title,author:"Sunil Dennis",creator:"Job tracker"});
+  const fonts=await loadCvFonts();const FAM=fonts?"Carlito":"helvetica";const safe=fonts?(t=>t.replace(/ /g," ")):pdfSafe;
+  if(fonts)for(const [st,data] of Object.entries(fonts)){const n=`Carlito-${st}.ttf`;doc.addFileToVFS(n,data);doc.addFont(n,"Carlito",st)}
+  const font=(b,i)=>doc.setFont(FAM,b?"bold":i?"italic":"normal");
+  const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),L=51,R=W-51,TOP=39.5,BOTTOM=H-56;
+  const blocks=cvBlocks(md);const footer=cvFooter(blocks);
+  let y=TOP,prev=null;
+  for(const b of blocks){const st=CV_ST[b.type]||CV_ST.p;
+    let gap=(prev?(CV_ST[prev]||CV_ST.p).after||0:0)+(st.before||0);
+    if(b.type==="h3"&&prev&&prev!=="li"&&prev!=="p")gap=prev==="h2"?CV_ST.h2.after+1.9:1.6;
+    y+=gap;
+    if(st.keep&&y+st.lh+(st.keep||0)>BOTTOM){doc.addPage();y=TOP}
+    // words with their own style
+    const words=[];for(const r of b.runs){const t=safe(st.caps?r.t.toUpperCase():r.t);
+      for(const w of t.split(/(\s+)/))if(w)words.push({t:w,b:!!(st.b||r.b),i:!!(st.i||r.i),c:r.link?CV_BLUE:(r.c||st.c||"000000"),link:r.link})}
+    const x0=L+(st.indent||0),avail=R-x0;const lines=[];let line=[],lw=0;
+    for(const w of words){font(w.b,w.i);doc.setFontSize(st.size);const ww=doc.getTextWidth(w.t);
+      if(/^\s+$/.test(w.t)){if(line.length){line.push({...w,w:ww});lw+=ww}continue}
+      if(lw+ww>avail&&line.length){while(line.length&&/^\s+$/.test(line[line.length-1].t))lw-=line.pop().w;lines.push({items:line,w:lw});line=[];lw=0}
+      line.push({...w,w:ww});lw+=ww}
+    while(line.length&&/^\s+$/.test(line[line.length-1].t))lw-=line.pop().w;if(line.length)lines.push({items:line,w:lw});
+    lines.forEach((ln,k)=>{
+      if(y+st.lh>BOTTOM){doc.addPage();y=TOP}
+      const base=y+st.size*0.95;let x=st.center?(W-ln.w)/2:x0;
+      if(b.type==="li"&&k===0){doc.setFillColor(0,0,0);doc.circle(L+8.2,base-st.size*0.32,1.8,"F")}
+      for(const it of ln.items){font(it.b,it.i);doc.setFontSize(st.size);doc.setTextColor(...cvRgb(it.c));doc.text(it.t,x,base);
+        if(it.link){doc.setDrawColor(...cvRgb(CV_BLUE));doc.setLineWidth(0.5);doc.line(x,base+1.4,x+it.w,base+1.4);doc.link(x,y,it.w,st.lh,{url:it.link})}
+        x+=it.w}
+      y+=st.lh});
+    if(st.rule){doc.setDrawColor(...cvRgb(CV_BLUE));doc.setLineWidth(0.9);doc.line(L-1,y-0.4,R,y-0.4)}
+    prev=b.type}
+  const pages=doc.getNumberOfPages();
+  for(let p=1;p<=pages;p++){doc.setPage(p);font(false,false);doc.setFontSize(8.5);doc.setTextColor(...cvRgb(CV_GREY));
+    const t=safe(footer);doc.text(t,(W-doc.getTextWidth(t))/2,H-36)}
+  return {blob:doc.output("blob"),pages}}
+async function buildCvDocx(md,title){
+  await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
+  const NS='xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  const links=[];const blocks=cvBlocks(md);
+  const rPr=r=>{const p=(r.b?"<w:b/>":"")+(r.i?"<w:i/>":"")+(r.link||r.c?`<w:color w:val="${r.link?CV_BLUE:r.c}"/>`:"")+(r.link?'<w:u w:val="single"/>':"");return p?`<w:rPr>${p}</w:rPr>`:""};
+  const run=r=>{const x=`<w:r>${rPr(r)}<w:t xml:space="preserve">${xmlEsc(r.t)}</w:t></w:r>`;
+    if(!r.link)return x;links.push(r.link);return `<w:hyperlink r:id="rIdL${links.length}">${x}</w:hyperlink>`};
+  const style={h1:"CvName",headline:"CvHeadline",contact:"CvContact",h2:"Heading1",h3:"Heading2",meta:"CvMeta",li:"ListBullet",skill:"CvSkill",p:"Normal"};
+  const body=blocks.map(b=>`<w:p><w:pPr><w:pStyle w:val="${style[b.type]||"Normal"}"/>${b.type==="li"?'<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>':""}</w:pPr>${b.runs.map(run).join("")}</w:p>`).join("");
+  const font='<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri" w:eastAsia="Calibri"/>';
+  const ps=(id,name,ppr,rpr,extra="")=>`<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/>${extra}<w:pPr>${ppr}</w:pPr><w:rPr>${rpr}</w:rPr></w:style>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="21"/><w:szCs w:val="21"/><w:lang w:val="en-GB"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="264" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
+   +`<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="40"/></w:pPr></w:style>`
+   +ps("CvName","Title",'<w:jc w:val="center"/><w:spacing w:after="60" w:line="240" w:lineRule="auto"/>',`<w:b/><w:color w:val="${CV_BLUE}"/><w:sz w:val="44"/><w:szCs w:val="44"/>`)
+   +ps("CvHeadline","Subtitle",'<w:jc w:val="center"/><w:spacing w:after="60"/>','<w:b/><w:caps/><w:sz w:val="24"/><w:szCs w:val="24"/>')
+   +ps("CvContact","Contact",'<w:jc w:val="center"/><w:spacing w:after="0"/>',"")
+   +ps("Heading1","heading 1",`<w:keepNext/><w:spacing w:before="200" w:after="100"/><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="1" w:color="${CV_BLUE}"/></w:pBdr><w:outlineLvl w:val="0"/>`,`<w:b/><w:caps/><w:color w:val="${CV_BLUE}"/><w:sz w:val="22"/><w:szCs w:val="22"/>`,'<w:next w:val="Normal"/>')
+   +ps("Heading2","heading 2",'<w:keepNext/><w:spacing w:before="100" w:after="0"/><w:outlineLvl w:val="1"/>','<w:b/>','<w:next w:val="Normal"/>')
+   +ps("CvMeta","Dates",'<w:keepNext/><w:spacing w:after="40"/>',`<w:i/><w:color w:val="${CV_GREY}"/><w:sz w:val="19"/><w:szCs w:val="19"/>`)
+   +ps("CvSkill","Skills line",'<w:spacing w:after="10"/>',"")
+   +ps("ListBullet","List Bullet",'<w:spacing w:after="0"/><w:ind w:left="310" w:hanging="194"/>',"")
+   +ps("Footer","footer",'<w:jc w:val="center"/>',`<w:color w:val="${CV_GREY}"/><w:sz w:val="17"/><w:szCs w:val="17"/>`)+`</w:styles>`;
+  const numbering=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="310" w:hanging="194"/></w:pPr><w:rPr>${font}</w:rPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
+  const footerXml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS}><w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr><w:r><w:t xml:space="preserve">${xmlEsc(cvFooter(blocks))}</w:t></w:r></w:p></w:ftr>`;
+  const document_=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${body}<w:sectPr><w:footerReference w:type="default" r:id="rIdF"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="680" w:right="1020" w:bottom="1020" w:left="1020" w:header="454" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const rel=(id,type,target,ext)=>`<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${xmlEsc(target)}"${ext?' TargetMode="External"':""}/>`;
+  const z=new window.JSZip();
+  z.file("[Content_Types].xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`);
+  z.file("_rels/.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`);
+  z.file("word/_rels/document.xml.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rel("rId1","styles","styles.xml")}${rel("rId2","numbering","numbering.xml")}${rel("rIdF","footer","footer1.xml")}${links.map((u,i)=>rel("rIdL"+(i+1),"hyperlink",u,true)).join("")}</Relationships>`);
+  z.file("docProps/core.xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${xmlEsc(title)}</dc:title><dc:creator>Sunil Dennis</dc:creator></cp:coreProperties>`);
+  z.file("word/document.xml",document_);z.file("word/styles.xml",styles);z.file("word/numbering.xml",numbering);z.file("word/footer1.xml",footerXml);
+  return z.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"})}
+
 /* --- Jobs view --- */
 function renderPipe(){
   const p=$("pipe");p.replaceChildren();
@@ -508,7 +624,7 @@ function fileBase(j,kind){return `${KINDS[kind].file} - ${j.company||j.title||"j
 async function saveFile(j,kind,fmt,btn,label){
   const md=j[KINDS[kind].field];const base=fileBase(j,kind);btn.disabled=true;btn.textContent="Preparing…";
   try{
-    const data=fmt==="pdf"?(await buildPdf(md,base)).blob:await buildDocx(md,base);
+    const data=kind==="cv"?(fmt==="pdf"?(await buildCvPdf(md,base)).blob:await buildCvDocx(md,base)):fmt==="pdf"?(await buildPdf(md,base)).blob:await buildDocx(md,base);
     btn.textContent="Saving…";
     await downloads.save({filename:`${base}.${fmt}`,data});btn.textContent="Saved"}
   catch(e){btn.textContent=e.code==="declined"?label:e.message==="load"?"No connection, try again":e.code==="extension_not_enabled"?"Not available here":"Not saved"}
@@ -526,7 +642,46 @@ function visaLine(j){
    :"Right to work: on a UK Student visa, so can work up to 20 hours a week in term time (full time in university vacations), as an employee (not self-employed). Graduate visa from January 2027.";}
 function jobBlock(j){return `JOB\nTitle: ${j.title}\nCompany: ${j.company||"unknown"}\nLocation: ${j.location||"unknown"}\nPay: ${j.pay||"not stated"}\n\nJOB ADVERT:\n${(j.description||"").trim()||"(No advert text saved. Tailor to what this job title at this company typically needs, using common requirements for the role, and keep claims strictly to the master CV.)"}`}
 function prompt(kind,j){
-  if(kind==="cv")return `You are an expert UK tech recruiter and ATS specialist writing a tailored CV for Sunil.\n\n${RULES}\n\nATS FORMAT (this CV must parse cleanly in applicant tracking systems):\n- Single column Markdown only: no tables, columns, images, icons, emojis, horizontal rules or links in brackets.\n- Use exactly this layout and these headings, in capitals:\n# SUNIL DENNIS\n(one line) a headline that uses the advert's job title where his experience truthfully fits, e.g. "Python / Django Developer"\n(one line) contact details from the master CV separated by " | ": city, phone, email, LinkedIn, GitHub (plain text, only those in the master CV)\n## PROFILE\n3-4 lines aimed at this role, naming the advert's main skills he has.\n## SKILLS\n4-6 bullets, each "- **Category:** item, item, item", with the advert's skills first.\n## EXPERIENCE\nFor each role "### Job Title | Company | Location | Mon YYYY - Mon YYYY" then bullets: 4-6 for the most relevant role, 2-3 for older or less relevant roles. Merge or drop roles that add nothing for this job.\n## PROJECTS\nOnly if useful: 1-3 projects, "### Name | Main tech" plus 1-2 bullets.\n## EDUCATION\n"### Degree | Institution | YYYY - YYYY", most recent first.\n## CERTIFICATIONS\nOnly if the master CV has any.\n\nKEYWORDS: use these advert keywords, spelled exactly as written here, wherever the master CV truthfully supports them (skills, profile and bullets). Skip any he doesn't have: ${(j.keywords||[]).join(", ")||"(take them from the advert)"}\nWrite acronyms with the full form once, e.g. "Django REST Framework (DRF)".\n\nLENGTH: it must fit on 2 A4 pages at 10pt, so 550-700 words in total. Bullets start with a strong past-tense verb (present tense for the current role) and stay on 1-2 lines. Use numbers only where the master CV gives them.\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
+  if(kind==="cv")return `You are an expert UK tech recruiter and ATS specialist tailoring Sunil's own CV to one ${j.source==="freelancer"||/freelance/i.test(j.notes||"")?"freelance project":"job"}.
+
+The MASTER CV below is Sunil's own CV. The tailored CV must look exactly like it and keep ALL of its content.
+
+KEEP EXACTLY (never drop, merge or add any of these):
+- The same sections, with these headings in this order: PROFESSIONAL SUMMARY, TECHNICAL SKILLS, PROFESSIONAL EXPERIENCE, SELECTED PROJECTS, CERTIFICATIONS & TRAINING, KEY ACHIEVEMENTS & TECHNICAL COMMUNITY CONTRIBUTIONS, EDUCATION (plus any other section the master CV has, in its place).
+- Every role, project, certification, achievement and degree, with every bullet, date, place, link and the contact lines word for word.
+- His wording. Keep each bullet his own sentence.
+
+YOU MAY CHANGE ONLY:
+- The headline line under the name: the advert's job title where his experience truly fits, then 3-4 of the advert's key skills he has, separated by " | ", in capitals (like "PYTHON FULL STACK DEVELOPER | DJANGO | FASTAPI | REACT | TYPESCRIPT").
+- The PROFESSIONAL SUMMARY: rewrite it in his style for this role, about the same length (5-6 lines), leading with what the advert needs most that he has.
+- TECHNICAL SKILLS: reorder the lines and the items in each line so the advert's skills come first. Add one of the advert's keywords to a line only if the master CV shows he has used it.
+- The order of bullets inside each role and project (most relevant to this job first), and small word swaps in a bullet to use the advert's exact term for the same thing (for example "REST APIs" to "RESTful APIs").
+
+EXACT MARKDOWN FORMAT (same as the master CV):
+# SUNIL DENNIS
+HEADLINE IN CAPITALS
+Sheffield, UK | 07721301256 | [sunildennisb7@gmail.com](mailto:sunildennisb7@gmail.com)
+[LinkedIn](url) | [GitHub](url) | [Portfolio](url)
+## SECTION HEADING
+**Skill category:** item, item, item   (skills are lines, not bullets)
+### Job Title | Company
+*Place • Month YYYY – Month YYYY*
+- bullet
+### Project Name
+*Technologies: a, b, c*
+- bullet
+### Degree or certification
+*Institution, Country | Month YYYY – Month YYYY*
+Use the links, emails and dates from the master CV. If the master CV is plain text, convert it to exactly this format without losing anything.
+
+KEYWORDS from the advert to use where the master CV truly supports them (skip any he doesn't have): ${(j.keywords||[]).join(", ")||"(take them from the advert)"}
+
+LENGTH: it must stay on 2 A4 pages, so keep the total length within about 5% of the master CV. UK English. Never invent employers, dates, titles, tools, numbers or responsibilities. Output only the CV Markdown, with no preamble.
+
+${jobBlock(j)}
+
+MASTER CV:
+${cv}`;
   if(kind==="letter")return `Write a cover letter from Sunil Dennis for this job.\n\n${RULES}\n- 250-350 words, 4 short paragraphs: why this role and company, two or three concrete matches between the advert and his experience, what he would bring, a confident close.\n- Plain and specific, no clichés like "I am writing to express my interest".\n- Mention right to work in one plain sentence, based on: ${visaLine(j)}\n- Start with 'Dear Hiring Manager,' unless the advert names a person. End with 'Kind regards,' and 'Sunil Dennis' and his phone and email from the CV.\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
   return `Build an interview prep pack for Sunil for this job.\n\n${RULES}\n- You cannot browse, so base company points only on the advert and say what Sunil should look up himself.\n\nUse these sections:\n## The role in one minute (what they really need, from the advert)\n## Your 2-minute pitch (first person, tailored, from the CV)\n## Likely questions and strong answers (10 questions: mix of technical on their stack and behavioural; answer behavioural ones in STAR form using real CV examples)\n## Technical topics to revise (bullets, most likely first)\n## Gaps and how to handle them (where the CV is thin against the advert, and an honest way to answer)\n## Questions to ask them (5)\n## Right to work answer (one or two sentences, based on: ${visaLine(j)})\n## Check before the interview (things to look up about the company)\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
 }
@@ -543,7 +698,7 @@ function atsCheck(md,keywords,pages){
   const has=k=>{const n=norm(k).trim();if(!n)return true;return text.includes(" "+n+" ")||text.includes(" "+n.replace(/s$/,"")+" ")||text.includes(" "+n+"s ")||text.includes(" "+n.replace(/\s/g,"")+" ")};
   const matched=keywords.filter(has),missing=keywords.filter(k=>!has(k));
   const heads=[...md.matchAll(/^##\s+(.+)$/gm)].map(m=>m[1].trim().toUpperCase());
-  const headings=["PROFILE","SKILLS","EXPERIENCE","EDUCATION"].every(h=>heads.some(x=>x.startsWith(h)));
+  const headings=[["PROFILE","SUMMARY"],["SKILLS"],["EXPERIENCE"],["EDUCATION"]].every(alts=>heads.some(x=>alts.some(a=>x.includes(a))));
   return {total:keywords.length,matched,missing,score:keywords.length?Math.round(100*matched.length/keywords.length):100,pages,headings,words:md.replace(/[#*|-]/g," ").split(/\s+/).filter(Boolean).length}}
 async function generate(kind){
   const j=current();if(!j)return;
@@ -565,12 +720,12 @@ async function generate(kind){
       let pages=null;
       try{
         title.textContent="Checking it fits on 2 pages…";
-        pages=(await buildPdf(text,"check")).pages;
+        pages=(await buildCvPdf(text,"check")).pages;
         for(let tries=0;pages>2&&tries<2;tries++){
           title.textContent=`It ran to ${pages} pages. Shortening to 2…`;
           const words=text.split(/\s+/).length,target=Math.round(words*(tries?0.75:0.82));
-          ({text}=await sample(`This tailored CV is ${pages} A4 pages and must fit on 2. Shorten it to about ${target} words: cut the least relevant bullets, merge older roles, tighten wording. Keep the exact Markdown layout, headings, contact line and every keyword that matches the job. Do not add anything new. Output only the CV.\n\nJOB TITLE: ${j.title}\n\nCV:\n${text}`,{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)}));
-          pages=(await buildPdf(text,"check")).pages}
+          ({text}=await sample(`This tailored CV is ${pages} A4 pages and must fit on 2. Shorten it to about ${target} words by tightening the wording of the summary and the longest bullets. Keep every section, role, project, certification, achievement, degree, link and date, and the exact Markdown layout. Only if that is not enough, remove the least relevant bullet from the oldest role or a project. Keep every keyword that matches the job. Do not add anything new. Output only the CV.\n\nJOB TITLE: ${j.title}\n\nCV:\n${text}`,{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)}));
+          pages=(await buildCvPdf(text,"check")).pages}
       }catch(e){if(e.code==="cancelled")throw e}
       data[k.field]=text;
       data.atsReport=atsCheck(text,keywords,pages??0);
@@ -1250,7 +1405,9 @@ const boardView = (() => {
     };
     const write = el("button", "btn sm", r.f ? "Write proposal" : "Tailor CV"); write.type = "button";
     write.onclick = () => r.f ? openProposal(r) : tailorFromBoard(r);
-    acts.append(save, write); it.append(acts);
+    acts.append(save, write);
+    if (r.f) { const cvBtn = el("button", "btn sm", "Tailor CV"); cvBtn.type = "button"; cvBtn.onclick = () => tailorFromBoard(r); acts.append(cvBtn); }
+    it.append(acts);
     return it;
   }
 
