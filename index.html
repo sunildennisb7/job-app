@@ -836,14 +836,13 @@ $("cvSave").onclick=async()=>{
     <div class="actions"><span class="status" id="c-msg"></span><button class="btn primary" id="c-save" type="button">Save and test</button></div>
     <div class="actions"><p class="note" id="c-sync"></p><button class="btn sm" id="c-syncnow" type="button">Sync now</button></div>
     <h3>Use on another device</h3>
-    <p class="note">On the device that already works, tap <b>Copy setup code</b>. On the other device, open the app (from the Home Screen on iPhone), tap <b>Paste setup code</b>, and it syncs straight away. With the same Apple ID and Handoff on, what you copy on your Mac can be pasted on your iPhone. The code holds your keys, so don't send it to anyone else.</p>
-    <div class="actions" style="flex-wrap:wrap;gap:8px">
+    <p class="note"><b>1.</b> On the device that already syncs (your Mac), tap <b>Copy setup code</b>.<br><b>2.</b> On the other device (the iPhone app from your Home Screen), touch and hold the box below, tap <b>Paste</b>, then <b>Use this code</b>.<br>If Paste doesn't appear on the iPhone, send the code to yourself (for example in a note or an email), copy it there and paste it here. The code holds your keys, so don't send it to anyone else.</p>
+    <div class="actions" style="flex-wrap:wrap;gap:8px;justify-content:flex-start">
       <button class="btn" id="c-copy" type="button">Copy setup code</button>
-      <button class="btn" id="c-paste" type="button">Paste setup code</button>
       <button class="btn sm" id="c-link" type="button">Copy setup link</button>
     </div>
-    <label id="c-codebox" hidden>Paste the setup code here<textarea id="c-code" autocomplete="off" spellcheck="false" placeholder="JOBAPP-SETUP-1:…"></textarea></label>
-    <span class="status" id="c-setupmsg"></span>`;
+    <label>Setup code from your other device<textarea id="c-code" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Touch and hold here, then tap Paste"></textarea></label>
+    <div class="actions"><span class="status" id="c-setupmsg"></span><button class="btn primary" id="c-paste" type="button">Use this code</button></div>`;
   const cvView = $("view-cv");
   cvView.insertBefore(panel, cvView.firstChild);
   $("c-gh").value = s.githubToken; $("c-repo").value = s.repo; $("c-ai").value = s.geminiKey; $("c-model").value = s.model;
@@ -875,12 +874,12 @@ $("cvSave").onclick=async()=>{
   const fillForm = () => { const c = jobapp.settings(); $("c-gh").value = c.githubToken; $("c-repo").value = c.repo; $("c-ai").value = c.geminiKey; $("c-model").value = c.model; };
   async function copyText(text, what) {
     try { await navigator.clipboard.writeText(text); setupMsg(what + " copied. Now paste it on your other device."); }
-    catch (e) { $("c-codebox").hidden = false; $("c-code").value = text; $("c-code").select(); setupMsg("Copy the text in the box above."); }
+    catch (e) { $("c-code").value = text; $("c-code").focus(); $("c-code").select(); setupMsg("Copy the selected text in the box above."); }
   }
   async function useCode(text) {
     try {
       jobapp.applySetupCode(text);
-      fillForm(); $("c-code").value = ""; $("c-codebox").hidden = true;
+      fillForm(); $("c-code").value = "";
       setupMsg("Set up. Syncing…");
       await jobapp.syncNow();
       setupMsg(jobapp.syncState.status === "synced" ? "Done. This device now syncs with your other one." : jobapp.syncState.message);
@@ -896,16 +895,12 @@ $("cvSave").onclick=async()=>{
     if (!jobapp.gh.ready()) { setupMsg("Add your GitHub token on this device first."); return; }
     copyText(jobapp.setupLink(), "Setup link");
   };
-  $("c-paste").onclick = async () => {
-    const box = $("c-codebox");
-    if (!box.hidden && $("c-code").value.trim()) { useCode($("c-code").value); return; }
-    let text = "";
-    try { text = await navigator.clipboard.readText(); } catch (e) { text = ""; }
-    if (/JOBAPP-SETUP-1:/.test(text)) { useCode(text); return; }
-    box.hidden = false; $("c-code").focus();
-    setupMsg("Paste the code into the box, then tap Paste setup code again.");
+  $("c-paste").onclick = () => {
+    const text = $("c-code").value.trim();
+    if (!text) { setupMsg("The box is empty. Touch and hold it, tap Paste, then try again."); $("c-code").focus(); return; }
+    useCode(text);
   };
-  $("c-code").addEventListener("input", () => { if (/JOBAPP-SETUP-1:\S+/.test($("c-code").value)) useCode($("c-code").value); });
+  $("c-code").addEventListener("paste", () => setTimeout(() => { if (/JOBAPP-SETUP-1:/.test($("c-code").value)) useCode($("c-code").value); }, 50));
   $("c-syncnow").onclick = async () => {
     const b = $("c-syncnow"); b.disabled = true;
     try { await jobapp.syncNow(); } finally { b.disabled = false; }

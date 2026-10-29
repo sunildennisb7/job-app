@@ -235,8 +235,9 @@
     return SETUP_PREFIX + b64encode(JSON.stringify({ repo: s.repo, githubToken: s.githubToken, geminiKey: s.geminiKey, model: s.model }));
   }
   function applySetupCode(text) {
-    const m = String(text || "").match(/JOBAPP-SETUP-1:([A-Za-z0-9+/=_-]+)/);
-    if (!m) throw err("bad_setup_code", "That isn't a setup code");
+    // Notes, Mail and Messages can add line breaks or spaces; take them out.
+    const m = String(text || "").replace(/\s+/g, "").match(/JOBAPP-SETUP-1:([A-Za-z0-9+/=_%-]+)/);
+    if (!m) throw err("bad_setup_code", "That isn't a setup code. It should start with JOBAPP-SETUP-1:. Copy it again on your Mac.");
     let s;
     try { s = JSON.parse(b64decode(decodeURIComponent(m[1]).replace(/-/g, "+").replace(/_/g, "/"))); }
     catch (e) { throw err("bad_setup_code", "That setup code is damaged. Copy it again."); }
