@@ -65,9 +65,15 @@
   };
 
   /* ---------------- Local database with Firestore-like API ---------------- */
-  // records: { "collection/id": { d: data|null (null = deleted), t: ms } }
+  // records: { "collection/id": { d: data|null (null = deleted), t: ms, b: ms, f: { field: ms } } }
+  // t = last change to the record, b = when the whole record was last replaced, f = when each field last changed.
+  // Field times let edits to different fields of the same job on the Mac and the iPhone both survive a sync.
   let records = {};
   try { records = JSON.parse(LS.get(DB_KEY) || "{}").records || {}; } catch (e) { records = {}; }
+  let clock = 0;
+  for (const r of Object.values(records)) clock = Math.max(clock, r.t || 0);
+  // Always later than anything this device has seen, so a new edit wins even if this device's clock is behind.
+  const tick = () => (clock = Math.max(Date.now(), clock + 1));
   const listeners = new Set();
   let syncSha = null, dirty = false, pushTimer = null, syncing = null;
   const SYNC_PATH = "app-data/tracker.json";
@@ -80,8 +86,17 @@
     window.dispatchEvent(new CustomEvent("jobapp-sync", { detail: { ...syncState } }));
   }
 
-  function write(path, data) {
-    records[path] = { d: data, t: Date.now() };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function write(path, data, fields) {
+    const t = tick(), cur = records[path];
+    if (data && fields && cur && cur.d) {
+      // update(): only the fields that really changed get a new time.
+      const f = { ...(cur.f || {}) };
+      for (const k of fields) if (!same(cur.d[k], data[k])) f[k] = t;
+      records[path] = { d: data, t, b: cur.b || cur.t, f };
+    } else {
+      records[path] = data ? { d: data, t, b: t } : { d: null, t };
+    }
     persist(); notify(); schedulePush();
   }
   function docsIn(col) {
@@ -97,8 +112,15 @@
     return {
       id, path,
       async set(data) { write(path, { ...data }); },
-      async update(data) { const cur = records[path] && records[path].d; write(path, { ...(cur || {}), ...data }); },
+      async update(data) { const cur = records[path] && records[path].d; write(path, { ...(cur || {}), ...data }, Object.keys(data)); },
       async delete() { write(path, null); },
+      // For things the app adds by itself (alerts, inbox emails): if another device already has this record,
+      // its copy wins, so an automatic import never undoes an edit made on the other device.
+      async create(data) {
+        if (records[path]) return;
+        records[path] = { d: { ...data }, t: 1, b: 1 };
+        persist(); notify(); schedulePush();
+      },
       async get() { const r = records[path]; return { id, exists: !!(r && r.d), data: () => r && r.d ? JSON.parse(JSON.stringify(r.d)) : undefined }; },
       onSnapshot(cb, onErr) {
         const fire = () => { const r = records[path]; cb({ id, exists: !!(r && r.d), data: () => (r && r.d ? JSON.parse(JSON.stringify(r.d)) : undefined) }); };
@@ -122,15 +144,37 @@
   const db = { collection: collectionRef, doc: docRef };
 
   /* ---------------- Sync with the private repo ---------------- */
+  const fieldTime = (rec, k) => (rec.f && rec.f[k]) || rec.b || rec.t || 0;
+  /** Merges one record from this device (l) and from GitHub (r). */
+  function mergeRecord(l, r) {
+    if (!l) return r;
+    if (!r) return l;
+    // A delete, or a whole-record replace, wins over everything older than it.
+    if (!l.d || !r.d) return (l.t || 0) >= (r.t || 0) ? l : r;
+    const lb = l.b || l.t, rb = r.b || r.t;
+    const keys = new Set([...Object.keys(l.d), ...Object.keys(r.d)]);
+    const d = {}, f = {};
+    for (const k of keys) {
+      const lt = fieldTime(l, k), rt = fieldTime(r, k);
+      const src = lt >= rt ? l : r, t = Math.max(lt, rt);
+      // A field only one side has, from before the other side replaced the whole record, was removed there.
+      if (!(k in src.d)) continue;
+      if (!(k in (src === l ? r : l).d) && t < Math.max(lb, rb)) continue;
+      d[k] = src.d[k];
+      if (t > Math.max(lb, rb)) f[k] = t;
+    }
+    return { d, t: Math.max(l.t || 0, r.t || 0), b: Math.max(lb, rb), f };
+  }
+  /** Merges GitHub's copy into this device. Returns true if GitHub needs this device's changes. */
   function merge(remote) {
     let changedLocal = false, remoteMissing = false;
-    for (const [k, r] of Object.entries(remote || {})) {
-      const l = records[k];
-      if (!l || r.t > l.t) { records[k] = r; changedLocal = true; }
-    }
-    for (const [k, l] of Object.entries(records)) {
-      const r = remote && remote[k];
-      if (!r || l.t > r.t) remoteMissing = true;
+    remote = remote || {};
+    for (const k of new Set([...Object.keys(records), ...Object.keys(remote)])) {
+      const l = records[k], r = remote[k];
+      const m = mergeRecord(l, r);
+      clock = Math.max(clock, m.t || 0);
+      if (!same(m, l)) { records[k] = m; changedLocal = true; }
+      if (!same(m, r)) remoteMissing = true;
     }
     if (changedLocal) { persist(); notify(); }
     return remoteMissing;
@@ -170,9 +214,48 @@
     clearTimeout(pushTimer);
     pushTimer = setTimeout(syncNow, 3000);
   }
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncNow(); });
+  // Pull from GitHub when the app opens, comes back to the front, regains focus or goes back online,
+  // and every minute while it's on screen. Push straight away when it goes to the background.
+  let lastPull = 0;
+  function pullSoon() { if (Date.now() - lastPull < 2000) return; lastPull = Date.now(); syncNow(); }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") pullSoon();
+    else if (dirty && gh.ready()) { clearTimeout(pushTimer); syncNow(); }
+  });
+  window.addEventListener("focus", pullSoon);
+  window.addEventListener("pageshow", pullSoon);
   window.addEventListener("online", () => syncNow());
-  setInterval(() => { if (document.visibilityState === "visible") syncNow(); }, 120000);
+  setInterval(() => { if (document.visibilityState === "visible") syncNow(); }, 60000);
+
+  /* ---------------- Set up another device ---------------- */
+  // A setup code carries this device's connections (GitHub token, repo, AI key) so the other device needs no typing.
+  const SETUP_PREFIX = "JOBAPP-SETUP-1:";
+  function setupCode() {
+    const s = settings();
+    return SETUP_PREFIX + b64encode(JSON.stringify({ repo: s.repo, githubToken: s.githubToken, geminiKey: s.geminiKey, model: s.model }));
+  }
+  function applySetupCode(text) {
+    const m = String(text || "").match(/JOBAPP-SETUP-1:([A-Za-z0-9+/=_-]+)/);
+    if (!m) throw err("bad_setup_code", "That isn't a setup code");
+    let s;
+    try { s = JSON.parse(b64decode(decodeURIComponent(m[1]).replace(/-/g, "+").replace(/_/g, "/"))); }
+    catch (e) { throw err("bad_setup_code", "That setup code is damaged. Copy it again."); }
+    const keep = {};
+    for (const k of ["repo", "githubToken", "geminiKey", "model"]) if (typeof s[k] === "string" && s[k]) keep[k] = s[k];
+    if (!keep.githubToken) throw err("bad_setup_code", "That setup code has no GitHub token");
+    saveSettings(keep);
+    return keep;
+  }
+  function setupLink() {
+    const code = setupCode().slice(SETUP_PREFIX.length).replace(/\+/g, "-").replace(/\//g, "_");
+    return location.origin + location.pathname + "#setup=" + code;
+  }
+  // Opening a setup link applies it once, then removes it from the address bar and history.
+  let setupFromLink = null;
+  if (/^#setup=/.test(location.hash)) {
+    try { setupFromLink = applySetupCode(SETUP_PREFIX + location.hash.slice(7)); } catch (e) { setupFromLink = e; }
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+  }
 
   /* ---------------- AI writing through Gemini ---------------- */
   function toContents(input) {
@@ -312,6 +395,7 @@
 
   const services = { db, sample, downloads, mcp };
   window.claude = { use: name => Promise.resolve(services[name] || null) };
-  window.jobapp = { settings, saveSettings, syncNow, syncState, gh, db, sample, b64decode };
+  window.jobapp = { settings, saveSettings, syncNow, syncState, gh, db, sample, b64decode,
+                    setupCode, setupLink, applySetupCode, setupFromLink, _merge: mergeRecord };
   if (gh.ready()) queueMicrotask(syncNow); else setStatus("local", syncState.message);
 })();

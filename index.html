@@ -828,13 +828,22 @@ $("cvSave").onclick=async()=>{
   const panel = el("div", "panel"); panel.id = "connPanel";
   panel.innerHTML = `
     <h3>App connections</h3>
-    <p class="note">Saved only on this device. Do this once on your iPhone and once on your Mac.</p>
+    <p class="note">Saved only on this device. Fill this in on one device, then use a setup code (below) for the other one.</p>
     <label>GitHub token (syncs your jobs and gets new alerts)<input id="c-gh" type="password" autocomplete="off" placeholder="github_pat_…"></label>
     <label>Private repo<input id="c-repo" autocomplete="off" placeholder="sunildennisb7/job-assistant"></label>
     <label>Gemini API key (free, for CVs, cover letters and practice)<input id="c-ai" type="password" autocomplete="off" placeholder="AIza…"></label>
     <label>AI model<input id="c-model" autocomplete="off" placeholder="gemini-flash-latest"></label>
     <div class="actions"><span class="status" id="c-msg"></span><button class="btn primary" id="c-save" type="button">Save and test</button></div>
-    <p class="note" id="c-sync"></p>`;
+    <div class="actions"><p class="note" id="c-sync"></p><button class="btn sm" id="c-syncnow" type="button">Sync now</button></div>
+    <h3>Use on another device</h3>
+    <p class="note">On the device that already works, tap <b>Copy setup code</b>. On the other device, open the app (from the Home Screen on iPhone), tap <b>Paste setup code</b>, and it syncs straight away. With the same Apple ID and Handoff on, what you copy on your Mac can be pasted on your iPhone. The code holds your keys, so don't send it to anyone else.</p>
+    <div class="actions" style="flex-wrap:wrap;gap:8px">
+      <button class="btn" id="c-copy" type="button">Copy setup code</button>
+      <button class="btn" id="c-paste" type="button">Paste setup code</button>
+      <button class="btn sm" id="c-link" type="button">Copy setup link</button>
+    </div>
+    <label id="c-codebox" hidden>Paste the setup code here<textarea id="c-code" autocomplete="off" spellcheck="false" placeholder="JOBAPP-SETUP-1:…"></textarea></label>
+    <span class="status" id="c-setupmsg"></span>`;
   const cvView = $("view-cv");
   cvView.insertBefore(panel, cvView.firstChild);
   $("c-gh").value = s.githubToken; $("c-repo").value = s.repo; $("c-ai").value = s.geminiKey; $("c-model").value = s.model;
@@ -862,10 +871,68 @@ $("cvSave").onclick=async()=>{
       if (jobapp.gh.ready()) { importAlerts(); }
     } finally { btn.disabled = false; }
   };
+  const setupMsg = t => { $("c-setupmsg").textContent = t; };
+  const fillForm = () => { const c = jobapp.settings(); $("c-gh").value = c.githubToken; $("c-repo").value = c.repo; $("c-ai").value = c.geminiKey; $("c-model").value = c.model; };
+  async function copyText(text, what) {
+    try { await navigator.clipboard.writeText(text); setupMsg(what + " copied. Now paste it on your other device."); }
+    catch (e) { $("c-codebox").hidden = false; $("c-code").value = text; $("c-code").select(); setupMsg("Copy the text in the box above."); }
+  }
+  async function useCode(text) {
+    try {
+      jobapp.applySetupCode(text);
+      fillForm(); $("c-code").value = ""; $("c-codebox").hidden = true;
+      setupMsg("Set up. Syncing…");
+      await jobapp.syncNow();
+      setupMsg(jobapp.syncState.status === "synced" ? "Done. This device now syncs with your other one." : jobapp.syncState.message);
+      if (jobapp.gh.ready()) importAlerts();
+      const cur = jobapp.settings(); if (cur.githubToken && cur.geminiKey) $("setupHint")?.remove();
+    } catch (e) { setupMsg(e.message || "That setup code didn't work."); }
+  }
+  $("c-copy").onclick = () => {
+    if (!jobapp.gh.ready()) { setupMsg("Add your GitHub token on this device first."); return; }
+    copyText(jobapp.setupCode(), "Setup code");
+  };
+  $("c-link").onclick = () => {
+    if (!jobapp.gh.ready()) { setupMsg("Add your GitHub token on this device first."); return; }
+    copyText(jobapp.setupLink(), "Setup link");
+  };
+  $("c-paste").onclick = async () => {
+    const box = $("c-codebox");
+    if (!box.hidden && $("c-code").value.trim()) { useCode($("c-code").value); return; }
+    let text = "";
+    try { text = await navigator.clipboard.readText(); } catch (e) { text = ""; }
+    if (/JOBAPP-SETUP-1:/.test(text)) { useCode(text); return; }
+    box.hidden = false; $("c-code").focus();
+    setupMsg("Paste the code into the box, then tap Paste setup code again.");
+  };
+  $("c-code").addEventListener("input", () => { if (/JOBAPP-SETUP-1:\S+/.test($("c-code").value)) useCode($("c-code").value); });
+  $("c-syncnow").onclick = async () => {
+    const b = $("c-syncnow"); b.disabled = true;
+    try { await jobapp.syncNow(); } finally { b.disabled = false; }
+  };
+  if (jobapp.setupFromLink) {
+    if (jobapp.setupFromLink instanceof Error) setupMsg(jobapp.setupFromLink.message);
+    else { fillForm(); setupMsg("Set up from your link. This device now syncs."); setTimeout(() => setTab("cv"), 0); }
+  }
   const showSync = d => { $("c-sync").textContent = d.message + (d.at && d.status === "synced" ? " at " + d.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : ""); };
   window.addEventListener("jobapp-sync", e => showSync(e.detail));
   window.addEventListener("jobapp-model", e => { $("c-model").value = e.detail; });
   showSync(jobapp.syncState);
+})();
+
+/* Sync status under the tabs, so each device shows when it last synced */
+(function syncLine() {
+  const line = el("p", "note"); line.id = "syncLine"; line.style.margin = "0";
+  const tabs = document.querySelector(".tabs"); tabs.parentNode.insertBefore(line, tabs.nextSibling);
+  const show = d => {
+    const t = d.at ? d.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
+    line.textContent = d.status === "synced" ? `✓ Synced ${t}` : d.status === "syncing" ? "Syncing…"
+      : d.status === "error" ? "⚠ " + d.message : "Not syncing yet: this device has no GitHub token. Tap to set up.";
+  };
+  line.style.cursor = "pointer";
+  line.onclick = () => { if (jobapp.syncState.status === "synced" || jobapp.syncState.status === "syncing") jobapp.syncNow(); else setTab("cv"); };
+  window.addEventListener("jobapp-sync", e => show(e.detail));
+  show(jobapp.syncState);
 })();
 
 /* First-run hint on the Jobs tab */
@@ -888,6 +955,7 @@ function importAlerts() {
     importing = true; const btn = $("alertScan"); btn.disabled = true;
     try {
       alertMsg("Checking job alerts…");
+      await jobapp.syncNow(); // get the other device's changes first
       let file;
       try { file = await jobapp.gh.readFile("data/feed.json"); }
       catch (e) { alertMsg(e.code === "bad_github_token" ? "GitHub token not accepted." : "Couldn't reach GitHub. Try again later."); return; }
@@ -900,12 +968,12 @@ function importAlerts() {
         const id = alertDocId(r.key);
         if (done.has(id) || have.has(id) || (r.url && have.has(r.url))) continue;
         have.add(id);
-        await db.collection("jobs").doc(id).set({ title: r.title || "", company: r.company || "", location: r.location || "", url: r.url || "",
+        await db.collection("jobs").doc(id).create({ title: r.title || "", company: r.company || "", location: r.location || "", url: r.url || "",
           pay: r.pay || "", visa: r.visa === "later" ? "later" : "now", description: r.description || "", status: "new",
           next: "Tailor CV and apply", nextDate: "", notes: `From ${r.source || "job"} alert, match ${r.score ?? "?"}/100`,
           source: r.source || "", score: r.score ?? null, created: now, updated: now,
           ...(r.workType !== undefined ? { workType: r.workType || "", hours: r.hours ?? null, partTime: r.partTime || 0, flexible: r.flexible || 0 } : {}) });
-        await db.collection("imports").doc(id).set({ at: now });
+        await db.collection("imports").doc(id).create({ at: now });
         added++;
       }
       const when = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -922,6 +990,7 @@ async function scanInbox() {
   const btn = $("inboxScan"); btn.disabled = true;
   try {
     inboxMsg("Loading emails the bot found…");
+    await jobapp.syncNow();
     let file;
     try { file = await jobapp.gh.readFile("data/inbox.json"); } catch (e) { inboxMsg("Couldn't reach GitHub. Try again later."); return; }
     let list = []; try { list = file ? JSON.parse(file.text) : []; } catch (e) { list = []; }
@@ -942,8 +1011,8 @@ async function scanInbox() {
         // Without AI, still show it so nothing is missed.
         info = { isInterview: true, company: "", role: "", stage: "Possible interview", start: "", summary: m.subject || "" };
       }
-      if (!info || !info.isInterview) { await db.collection("inbox").doc(m.id).set({ status: "dismissed", ...base }); continue; }
-      await db.collection("inbox").doc(m.id).set({ status: "found", company: info.company || "", role: info.role || "", stage: info.stage || "Interview",
+      if (!info || !info.isInterview) { await db.collection("inbox").doc(m.id).create({ status: "dismissed", ...base }); continue; }
+      await db.collection("inbox").doc(m.id).create({ status: "found", company: info.company || "", role: info.role || "", stage: info.stage || "Interview",
         start: info.start || "", durationMinutes: info.durationMinutes || null, location: info.location || "", meetingLink: info.meetingLink || "",
         needsReply: !!info.needsReply, summary: info.summary || "", matchJobId: info.matchJobId || "", ...base });
     }
