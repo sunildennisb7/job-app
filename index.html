@@ -700,6 +700,76 @@ function atsCheck(md,keywords,pages){
   const heads=[...md.matchAll(/^##\s+(.+)$/gm)].map(m=>m[1].trim().toUpperCase());
   const headings=[["PROFILE","SUMMARY"],["SKILLS"],["EXPERIENCE"],["EDUCATION"]].every(alts=>heads.some(x=>alts.some(a=>x.includes(a))));
   return {total:keywords.length,matched,missing,score:keywords.length?Math.round(100*matched.length/keywords.length):100,pages,headings,words:md.replace(/[#*|-]/g," ").split(/\s+/).filter(Boolean).length}}
+/* --- Fast tailoring: the AI returns only what changes (headline, summary, skill order, bullet order, small word swaps)
+   as short JSON, and the CV is rebuilt from the master CV here. One quick AI call instead of rewriting the whole CV,
+   and nothing from the master CV can go missing. --- */
+function cvParse(md){
+  const lines=md.replace(/\r/g,"").split("\n");if(!lines.some(l=>/^#\s/.test(l))||lines.filter(l=>/^##\s/.test(l)).length<3||!lines.some(l=>/^###\s/.test(l)))return null;
+  const r={lines,headline:-1,summary:[],skills:[],blocks:[]};let sec="",block=null,seenH1=false;
+  lines.forEach((l,i)=>{const t=l.trim();
+    if(/^#\s/.test(t)){seenH1=true;return}
+    if(/^##\s/.test(t)){sec=t.slice(3).toUpperCase();block=null;return}
+    if(seenH1&&!sec&&r.headline<0&&t){r.headline=i;return}
+    if(!t)return;
+    if(/SUMMARY|PROFILE/.test(sec)){r.summary.push(i);return}
+    if(/SKILLS/.test(sec)){const m=t.match(/^\*\*(.+?):\*\*\s*(.*)$/);if(m)r.skills.push({i,cat:m[1].trim(),items:m[2].split(/,\s*/).filter(Boolean)});return}
+    if(/^###\s/.test(t)){block={id:"B"+(r.blocks.length+1),title:t.slice(4),sec,bullets:[]};r.blocks.push(block);return}
+    const li=t.match(/^[-*•]\s+(.*)/);if(li&&block)block.bullets.push({i,text:li[1]})});
+  return r.headline>=0&&r.summary.length&&r.blocks.length?r:null}
+const cvWords=t=>new Set(t.toLowerCase().replace(/\[([^\]]+)\]\([^)]*\)/g,"$1").match(/[a-z0-9+#.]+/g)||[]);
+function cvAssemble(p,ai){
+  const lines=[...p.lines],kw=new Set();
+  const hl=String(ai.headline||"").trim();if(hl&&hl.length<=100&&!/\n/.test(hl))lines[p.headline]=hl.toUpperCase();
+  const orig=p.summary.map(i=>lines[i].trim()).join(" ");const sum=String(ai.summary||"").replace(/\s+/g," ").trim();
+  if(sum&&sum.length>=orig.length*0.6&&sum.length<=orig.length*1.2){lines[p.summary[0]]=sum;p.summary.slice(1).forEach(i=>lines[i]=null)}
+  if(Array.isArray(ai.skills)&&p.skills.length){
+    const byCat=new Map(p.skills.map(s=>[s.cat.toLowerCase(),s]));const used=new Set();const outL=[];
+    for(const s of ai.skills){const o=s&&byCat.get(String(s.category||"").trim().toLowerCase());if(!o||used.has(o))continue;used.add(o);
+      const items=(Array.isArray(s.items)?s.items:[]).map(x=>String(x).trim()).filter(Boolean);
+      const have=new Set(o.items.map(x=>x.toLowerCase()));const added=items.filter(x=>!have.has(x.toLowerCase())).slice(0,2);
+      const ordered=[...items.filter(x=>have.has(x.toLowerCase())),...added];
+      for(const x of o.items)if(!ordered.some(y=>y.toLowerCase()===x.toLowerCase()))ordered.push(x);
+      outL.push(`**${o.cat}:** ${ordered.join(", ")}`)}
+    for(const o of p.skills)if(!used.has(o))outL.push(lines[o.i]);
+    p.skills.forEach((o,k)=>lines[o.i]=outL[k])}
+  const rew=ai.rewrites||{};
+  for(const b of p.blocks){const n=b.bullets.length;if(!n)continue;
+    let ord=(ai.order&&ai.order[b.id]||[]).map(Number).filter(x=>x>=1&&x<=n);ord=[...new Set(ord)];
+    for(let k=1;k<=n;k++)if(!ord.includes(k))ord.push(k);
+    const texts=ord.map(k=>{const o=b.bullets[k-1].text;const r=String(rew[`${b.id}.${k}`]||"").trim();
+      if(!r)return o;const ow=cvWords(o),rw=cvWords(r);let same=0;for(const w of ow)if(rw.has(w))same++;
+      return same>=ow.size*0.7&&r.length<=o.length*1.3&&r.length>=o.length*0.7?r:o});
+    b.bullets.forEach((x,k)=>lines[x.i]="- "+texts[k])}
+  return lines.filter(l=>l!==null).join("\n")}
+function cvTrimOne(md){
+  // Fit to 2 pages: drop the last (least relevant, after reordering) bullet of the lowest role or project that has 3 or more.
+  const p=cvParse(md);if(!p)return null;
+  const cands=p.blocks.filter(b=>/EXPERIENCE|PROJECT/.test(b.sec)&&b.bullets.length>2);if(!cands.length)return null;
+  const b=cands[cands.length-1];const lines=[...p.lines];lines.splice(b.bullets[b.bullets.length-1].i,1);return lines.join("\n")}
+async function tailorCvFast(j,p,signal){
+  const listed=p.blocks.filter(b=>b.bullets.length).map(b=>`${b.id} ${b.title}\n${b.bullets.map((x,k)=>`  ${k+1}. ${x.text}`).join("\n")}`).join("\n");
+  const skills=p.skills.map(s=>`${s.cat}: ${s.items.join(", ")}`).join("\n");
+  const gig=/freelance/i.test(j.notes||"")||j.workType==="freelance";
+  const r=await sample.json(`You tailor Sunil's CV to one ${gig?"freelance project":"UK job"}. Reply with JSON only, in this shape:
+{"keywords": [up to 15 hard skills, tools and qualifications the advert screens for, in the advert's exact wording, most important first],
+ "headline": "the advert's job title where his experience truly fits, then 3-4 key skills he has, separated by ' | ', in CAPITALS, like his current one",
+ "summary": "his summary rewritten for this role in his own style, about the same length as now (5-6 lines), leading with what the advert needs most that he has",
+ "skills": [every skill line, same category names, reordered so the advert's skills come first: {"category": "...", "items": ["..."]}. Keep all his items; reorder them; add at most 2 advert keywords to a line only if his CV shows he has used them],
+ "order": {"B1": [bullet numbers, most relevant to this job first], ...one entry for every block},
+ "rewrites": {"B1.3": "the same bullet with a small word swap to use the advert's exact term for the same thing"} (only where useful, at most 6; never add new claims)}
+
+Rules: never invent experience, tools, numbers or responsibilities. UK English.
+
+CURRENT HEADLINE: ${p.lines[p.headline].trim()}
+CURRENT SUMMARY: ${p.summary.map(i=>p.lines[i].trim()).join(" ")}
+SKILL LINES:
+${skills}
+BLOCKS AND BULLETS:
+${listed}
+
+${jobBlock(j)}`,{signal,modelTier:"quick",cache:false});
+  const keywords=[...new Set((r&&r.keywords||[]).map(x=>String(x).trim()).filter(Boolean))].slice(0,15);
+  return {text:cvAssemble(p,r||{}),keywords}}
 async function generate(kind){
   const j=current();if(!j)return;
   if(!sample){aiNote("Writing isn't available in this view. Open the tracker in the Claude app.");return}
@@ -711,17 +781,25 @@ async function generate(kind){
   $("d-live").hidden=false;const title=$("d-liveTitle");
   const out=$("d-liveOut");
   try{
-    let keywords=[];
-    if(kind==="cv"){title.textContent="Reading the advert for ATS keywords…";out.textContent="Finding what the employer's screening software looks for.";keywords=await advertKeywords(j,myCtl.signal);j.keywords=keywords}
-    title.textContent="Writing your "+k.label.toLowerCase()+"…";out.textContent="Thinking… this usually takes under a minute.";
-    let {text,truncated}=await sample(prompt(kind,j),{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)});
-    const data={[k.field]:text};
+    let keywords=[],text="",truncated=false;const parsed=kind==="cv"?cvParse(cv):null;
+    if(parsed){
+      title.textContent="Tailoring your CV…";out.textContent="Picking what to bring forward for this job. This usually takes 10-30 seconds.";
+      ({text,keywords}=await tailorCvFast(j,parsed,myCtl.signal));
+      if(!keywords.length&&j.keywords)keywords=j.keywords;j.keywords=keywords;renderMd(out,text);
+    }else{
+      if(kind==="cv"){title.textContent="Reading the advert for ATS keywords…";out.textContent="Finding what the employer's screening software looks for.";keywords=await advertKeywords(j,myCtl.signal);j.keywords=keywords}
+      title.textContent="Writing your "+k.label.toLowerCase()+"…";out.textContent="Thinking… this usually takes under a minute.";
+      ({text,truncated}=await sample(prompt(kind,j),{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)}));
+    }
+    const data={[k.field]:text};if(parsed&&keywords.length)data.keywords=keywords;
     if(kind==="cv"){
       let pages=null;
       try{
         title.textContent="Checking it fits on 2 pages…";
         pages=(await buildCvPdf(text,"check")).pages;
-        for(let tries=0;pages>2&&tries<2;tries++){
+        // Fast path: drop the least relevant bullets until it fits (instant, no AI call).
+        for(let tries=0;parsed&&pages>2&&tries<6;tries++){const t=cvTrimOne(text);if(!t)break;text=t;pages=(await buildCvPdf(text,"check")).pages}
+        for(let tries=0;!parsed&&pages>2&&tries<2;tries++){
           title.textContent=`It ran to ${pages} pages. Shortening to 2…`;
           const words=text.split(/\s+/).length,target=Math.round(words*(tries?0.75:0.82));
           ({text}=await sample(`This tailored CV is ${pages} A4 pages and must fit on 2. Shorten it to about ${target} words by tightening the wording of the summary and the longest bullets. Keep every section, role, project, certification, achievement, degree, link and date, and the exact Markdown layout. Only if that is not enough, remove the least relevant bullet from the oldest role or a project. Keep every keyword that matches the job. Do not add anything new. Output only the CV.\n\nJOB TITLE: ${j.title}\n\nCV:\n${text}`,{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)}));
