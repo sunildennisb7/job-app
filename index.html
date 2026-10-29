@@ -455,7 +455,7 @@ async function buildCvPdf(md,title){
   const pages=doc.getNumberOfPages();
   for(let p=1;p<=pages;p++){doc.setPage(p);font(false,false);doc.setFontSize(8.5);doc.setTextColor(...cvRgb(CV_GREY));
     const t=safe(footer);doc.text(t,(W-doc.getTextWidth(t))/2,H-36)}
-  return {blob:doc.output("blob"),pages}}
+  return {blob:doc.output("blob"),pages,lastY:y,bottom:BOTTOM}}
 async function buildCvDocx(md,title){
   await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
   const NS='xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
@@ -752,11 +752,27 @@ function cvAssemble(p,ai){
       return same>=ow.size*0.7&&r.length<=o.length*1.3&&r.length>=o.length*0.7?r:o});
     b.bullets.forEach((x,k)=>lines[x.i]="- "+texts[k])}
   return lines.filter(l=>l!==null).join("\n")}
+// Room left on page 2 so the Word file, which spaces lines a little differently, also stays on 2 pages.
+const cvFits=r=>r.pages<2||(r.pages===2&&r.lastY<=r.bottom-30);
 function cvTrimOne(md){
-  // Fit to 2 pages: drop the last (least relevant, after reordering) bullet of the lowest role or project that has 3 or more.
+  // Make it shorter by one step, least important first. Bullets are already ordered most relevant first,
+  // so the last bullet of a block is the least relevant one.
   const p=cvParse(md);if(!p)return null;
-  const cands=p.blocks.filter(b=>/EXPERIENCE|PROJECT/.test(b.sec)&&b.bullets.length>2);if(!cands.length)return null;
-  const b=cands[cands.length-1];const lines=[...p.lines];lines.splice(b.bullets[b.bullets.length-1].i,1);return lines.join("\n")}
+  const proj=p.blocks.filter(b=>/PROJECT/.test(b.sec)),exp=p.blocks.filter(b=>/EXPERIENCE/.test(b.sec));
+  const lastWith=(list,n)=>[...list].reverse().find(b=>b.bullets.length>n);
+  const dropBullet=b=>{const lines=[...p.lines];lines.splice(b.bullets[b.bullets.length-1].i,1);return lines.join("\n")};
+  let b;
+  if((b=lastWith(proj,2)))return dropBullet(b);                       // projects down to 2 bullets
+  if((b=lastWith(exp.slice(1),2)))return dropBullet(b);               // older roles down to 2 bullets
+  if((b=lastWith(proj,1)))return dropBullet(b);                       // projects down to 1 bullet
+  if(exp[0]&&exp[0].bullets.length>5)return dropBullet(exp[0]);       // main role down to 5 bullets
+  if(proj.length>1){const last=proj[proj.length-1];                   // drop the least relevant project
+    const end=Math.max(...last.bullets.map(x=>x.i),p.lines.findIndex(l=>l.trim()==="### "+last.title)+1);
+    const start=p.lines.findIndex(l=>l.trim()==="### "+last.title);
+    if(start>=0){const lines=[...p.lines];lines.splice(start,end-start+1);return lines.join("\n")}}
+  if((b=lastWith(exp.slice(1),1)))return dropBullet(b);               // older roles down to 1 bullet
+  if(exp[0]&&exp[0].bullets.length>4)return dropBullet(exp[0]);       // main role down to 4 bullets
+  return null}
 async function tailorCvFast(j,p,signal,onText){
   const listed=p.blocks.filter(b=>b.bullets.length).map(b=>`${b.id} ${b.title}\n${b.bullets.map((x,k)=>`  ${k+1}. ${x.text}`).join("\n")}`).join("\n");
   const skills=p.skills.map(s=>`${s.cat}: ${s.items.join(", ")}`).join("\n");
@@ -820,14 +836,16 @@ async function generate(kind){
       let pages=null;
       try{
         ring(94,"Checking it fits on 2 pages…");
-        pages=(await buildCvPdf(text,"check")).pages;
-        // Fast path: drop the least relevant bullets until it fits (instant, no AI call).
-        for(let tries=0;parsed&&pages>2&&tries<6;tries++){const t=cvTrimOne(text);if(!t)break;text=t;pages=(await buildCvPdf(text,"check")).pages}
+        let chk=await buildCvPdf(text,"check");pages=chk.pages;
         for(let tries=0;!parsed&&pages>2&&tries<2;tries++){
           title.textContent=`It ran to ${pages} pages. Shortening to 2…`;
           const words=text.split(/\s+/).length,target=Math.round(words*(tries?0.75:0.82));
           ({text}=await sample(`This tailored CV is ${pages} A4 pages and must fit on 2. Shorten it to about ${target} words by tightening the wording of the summary and the longest bullets. Keep every section, role, project, certification, achievement, degree, link and date, and the exact Markdown layout. Only if that is not enough, remove the least relevant bullet from the oldest role or a project. Keep every keyword that matches the job. Do not add anything new. Output only the CV.\n\nJOB TITLE: ${j.title}\n\nCV:\n${text}`,{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>renderMd(out,text)}));
-          pages=(await buildCvPdf(text,"check")).pages}
+          chk=await buildCvPdf(text,"check");pages=chk.pages}
+        // Then remove the least important things, one at a time, until it fits on 2 pages (instant, no AI call).
+        let trimmed=0;
+        for(let tries=0;!cvFits(chk)&&tries<30;tries++){const t=cvTrimOne(text);if(!t)break;text=t;trimmed++;chk=await buildCvPdf(text,"check");pages=chk.pages}
+        if(trimmed)ring(97,`Trimmed ${trimmed} less relevant item${trimmed===1?"":"s"} to fit 2 pages`);
       }catch(e){if(e.code==="cancelled")throw e}
       data[k.field]=text;
       data.atsReport=atsCheck(text,keywords,pages??0);
@@ -843,7 +861,7 @@ async function generate(kind){
   }catch(e){
     if(e.code==="cancelled"){$("d-live").hidden=true}
     else{if(e.text)renderMd(out,e.text);title.textContent=k.label;
-      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?"Your free AI limit is used up for now. Try again later, or see My CV › App connections.":e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+"). Try again.")}
+      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?(e.daily?"Your free Google AI limit for today is used up. It resets at about 8am UK time.":"Google's free AI allows only a few requests a minute. Wait a minute and tap again."):e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+"). Try again.")}
   }finally{ringEnd();document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
 }
 const p0len=p=>p.summary.reduce((n,i)=>n+p.lines[i].length,0)+p.skills.reduce((n,x)=>n+p.lines[x.i].length,0);

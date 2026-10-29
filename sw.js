@@ -1,5 +1,5 @@
 /* Offline support: the app shell is cached; your data and AI calls always go to the network. */
-const CACHE = "job-assistant-v13";
+const CACHE = "job-assistant-v15";
 const SHELL = ["./", "index.html", "standalone.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png",
   "fonts/Carlito-Regular.ttf", "fonts/Carlito-Bold.ttf", "fonts/Carlito-Italic.ttf"];

@@ -287,7 +287,7 @@
     };
     const stream = typeof opts.onText === "function";
     // Quick jobs (like picking what to change in a CV) use Google's faster Flash-Lite model when this key has it.
-    const lite = opts.modelTier === "quick" && !opts._noLite && LS.get("jobapp-no-lite") !== "1";
+    const lite = (opts.modelTier === "quick" || opts._liteFallback) && !opts._noLite && LS.get("jobapp-no-lite") !== "1";
     const model = lite ? "gemini-flash-lite-latest" : (s.model || DEFAULTS.model);
     // Flash models "think" before writing, which is slow, and a long silent think made iPhone drop the connection.
     // Keep thinking short (none for quick jobs) and stream its summaries so data keeps flowing.
@@ -309,7 +309,7 @@
     const googleSays = async () => { try { return ((await res.clone().json()).error.message || "").slice(0, 300); } catch (e) { return ""; } };
     // 429 is a quota limit on this key, not a busy server. The free tier allows only a few requests a minute:
     // when Google says "retry in Ns", wait that long once. Otherwise (daily limit) try one other Flash model.
-    if (res.status === 429 && lite) return gemini(input, { ...opts, _noLite: true }, json, retried);
+    if (res.status === 429 && lite && !opts._liteFallback) return gemini(input, { ...opts, _noLite: true }, json, retried);
     if (res.status === 429) {
       let body = {}; try { body = await res.clone().json(); } catch (e) {}
       const msg = ((body.error && body.error.message) || "").slice(0, 300);
@@ -321,6 +321,10 @@
         if (typeof opts.onWait === "function") opts.onWait(wait);
         await new Promise(r => setTimeout(r, (wait + 1) * 1000));
         return gemini(input, { ...opts, _waited: true }, json, retried);
+      }
+      // Flash-Lite has its own free allowance, so when the main model's is used up, try that next.
+      if (!lite && !opts._noLite && !opts._liteFallback && LS.get("jobapp-no-lite") !== "1") {
+        return gemini(input, { ...opts, _liteFallback: true }, json, retried);
       }
       if (!opts._quota) {
         const alt = await pickModel(s.geminiKey, s.model).catch(() => null);
