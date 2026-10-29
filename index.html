@@ -802,7 +802,7 @@ let ringTimer=null,ringStart=0,ringVal=0;
 function ring(pct,label){ringVal=Math.max(ringVal,Math.min(100,pct));const fg=$("d-ringFg");if(!fg)return;
   fg.setAttribute("stroke-dasharray",`${ringVal.toFixed(1)} 100`);$("d-ringPct").textContent=Math.round(ringVal)+"%";$("d-ring").setAttribute("aria-valuenow",String(Math.round(ringVal)));
   if(label)$("d-liveTitle").textContent=label}
-function ringBegin(){ringVal=0;ringStart=Date.now();clearInterval(ringTimer);ring(0);
+function ringBegin(){$("d-ring").hidden=false;ringVal=0;ringStart=Date.now();clearInterval(ringTimer);ring(0);
   ringTimer=setInterval(()=>{const s=Math.round((Date.now()-ringStart)/1000);$("d-ringSub").textContent=`${s}s`},500)}
 function ringCreep(to){$("d-ring").classList.add("wait");clearInterval(ringCreep.t);ringCreep.t=setInterval(()=>ring(ringVal+(to-ringVal)*0.05),300)}
 function ringStream(len,expected,from,to){clearInterval(ringCreep.t);$("d-ring").classList.remove("wait");ring(from+(to-from)*Math.min(1,len/expected))}
@@ -860,8 +860,8 @@ async function generate(kind){
     else if(noAdvert)aiNote("This job has no advert saved, so it's tailored to the job title only. For a sharper match, tap Edit details, paste the advert, then Write again.");
   }catch(e){
     if(e.code==="cancelled"){$("d-live").hidden=true}
-    else{if(e.text)renderMd(out,e.text);title.textContent=k.label;
-      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?(e.daily?"Your free Google AI limit for today is used up. It resets at about 8am UK time.":"Google's free AI allows only a few requests a minute. Wait a minute and tap again."):e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+"). Try again.")}
+    else{if(e.text)renderMd(out,e.text);title.textContent="Couldn't finish";$("d-ring").hidden=true;$("d-ringSub").textContent="";
+      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?(e.daily?"Your free Google AI limit for today is used up. It resets at about 8am UK time.":"Google's free AI allows only a few requests a minute. Wait a minute and tap again."):e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+"). Try again.");if(!e.text)out.textContent=$("d-aiNote").textContent}
   }finally{ringEnd();document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
 }
 const p0len=p=>p.summary.reduce((n,i)=>n+p.lines[i].length,0)+p.skills.reduce((n,x)=>n+p.lines[x.i].length,0);
