@@ -433,7 +433,16 @@
   window.claude = { use: name => Promise.resolve(services[name] || null) };
   /** Opens a job advert link through Google (the browser itself can't read other sites) and returns its details. */
   async function readJobUrl(url, opts = {}) {
-    const { text } = await gemini(`Open this job advert and read it: ${url}
+    // LinkedIn job pages need a login, but the same advert is public at LinkedIn's guest address.
+    const li = String(url).match(/linkedin\.com\/.*?(?:jobs\/view\/(?:[^/?]*-)?|currentJobId=)(\d{6,})/i);
+    const target = li ? `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${li[1]}` : url;
+    // Give up after 45 seconds so the app never sits on "Opening the advert…".
+    const ctl = new AbortController(); let timedOut = false;
+    const t = setTimeout(() => { timedOut = true; ctl.abort(); }, 45000);
+    if (opts.signal) opts.signal.addEventListener("abort", () => ctl.abort());
+    let text;
+    try {
+      ({ text } = await gemini(`Open this job advert and read it: ${target}${li ? `\n(It is LinkedIn job ${li[1]}, originally ${url}. If that address can't be read, search for this LinkedIn job ID and use what you find.)` : ""}
 
 Return ONLY a JSON object, no other text:
 {"ok": true if you could read a job advert at that link, else false,
@@ -442,7 +451,13 @@ Return ONLY a JSON object, no other text:
  "hours": number of hours a week if stated, else null,
  "closingDate": "YYYY-MM-DD or empty",
  "description": "the full advert text, word for word, up to 6000 characters: duties, requirements, skills, benefits"}`,
-      { ...opts, tools: [{ url_context: {} }] }, true);
+        { ...opts, signal: ctl.signal, tools: li && !opts._oneTool ? [{ url_context: {} }, { google_search: {} }] : [{ url_context: {} }] }, true));
+    } catch (e) {
+      if (e.code === "cancelled" && timedOut) throw err("timeout", "The page took too long to open");
+      // Some models don't allow two tools together: try again with just the page reader.
+      if (li && e.code && /^ai_400$/.test(e.code) && !opts._oneTool) { clearTimeout(t); return readJobUrl(url, { ...opts, _oneTool: true }); }
+      throw e;
+    } finally { clearTimeout(t); }
     const clean = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
     const m = clean.match(/\{[\s\S]*\}/);
     try { return JSON.parse(m ? m[0] : clean); } catch (e) { throw err("bad_json", "Couldn't read that page"); }

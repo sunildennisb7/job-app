@@ -1319,10 +1319,14 @@ $("cvSave").onclick=async()=>{
       let r = null;
       if (pasted) { r = await extractFromText(pasted); r.description = pasted; r.ok = true; }
       else {
-        try { r = await jobapp.readJobUrl(url); } catch (e) { if (e.code !== "bad_json") throw e; r = { ok: false }; }
+        const t0 = Date.now(); const tick = setInterval(() => msg(`Opening the advert… ${Math.round((Date.now() - t0) / 1000)}s`), 1000);
+        try { r = await jobapp.readJobUrl(url); }
+        catch (e) { if (e.code === "quota" || e.code === "not_granted") throw e; r = { ok: false }; }
+        finally { clearInterval(tick); }
         if (!r || !r.ok || !(r.description || "").trim() || (r.description || "").length < 200) {
           st.read = "fail"; steps(st); $("qa-more").open = true;
-          msg("Couldn't read that page (LinkedIn and some job sites block it). Paste the advert text in the box above, then tap again.");
+          msg("Couldn't read that page (some job sites block it). Open the advert, copy the whole job description, paste it in the box above, then tap again.");
+          $("qa-text").focus();
           return;
         }
       }
