@@ -283,7 +283,7 @@
     if (!s.geminiKey) throw err("not_granted", "Add your free Gemini key in My CV › App connections");
     const body = {
       contents: toContents(input),
-      generationConfig: { maxOutputTokens: 8192, temperature: json ? 0.2 : 0.6, ...(json ? { responseMimeType: "application/json" } : {}) },
+      generationConfig: { maxOutputTokens: 8192, temperature: json ? 0.2 : 0.6, ...(json && !opts._noMime ? { responseMimeType: "application/json" } : {}) },
     };
     const stream = typeof opts.onText === "function";
     // Quick jobs (like picking what to change in a CV) use Google's faster Flash-Lite model when this key has it.
@@ -292,7 +292,7 @@
     // Flash models "think" before writing, which is slow, and a long silent think made iPhone drop the connection.
     // Keep thinking short (none for quick jobs) and stream its summaries so data keeps flowing.
     // Older models take a token budget, newer ones a level; whichever this model rejects is remembered.
-    const tmode = opts._tmode || LS.get("jobapp-thinking-mode") || "budget";
+    const tmode = opts._tmode || LS.get("jobapp-thinking-mode:" + model) || "budget";
     const quick = json || opts.modelTier === "quick";
     if (tmode === "budget") body.generationConfig.thinkingConfig = { thinkingBudget: quick ? 0 : 1024, ...(stream && !quick ? { includeThoughts: true } : {}) };
     else if (tmode === "level") body.generationConfig.thinkingConfig = { thinkingLevel: quick ? "minimal" : "low", ...(stream && !quick ? { includeThoughts: true } : {}) };
@@ -337,13 +337,16 @@
     }
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       const msg = await googleSays();
-      if (res.status === 400 && lite && /model/i.test(msg) && !/think/i.test(msg)) {
-        return gemini(input, { ...opts, _noLite: true }, json, retried);
-      }
-      if (res.status === 400 && body.generationConfig.thinkingConfig && /think/i.test(msg)) {
-        const next = tmode === "budget" ? "level" : "none";
-        if (!lite) LS.set("jobapp-thinking-mode", next);
-        return gemini(input, { ...opts, _tmode: next }, json, retried);
+      // Models differ in which settings they accept. Step down to safer settings one at a time:
+      // thinking as a budget, then as a level, then no thinking setting; then the main model; then plain JSON.
+      if (res.status === 400 && !/api key/i.test(msg)) {
+        if (body.generationConfig.thinkingConfig) {
+          const next = tmode === "budget" ? "level" : "none";
+          LS.set("jobapp-thinking-mode:" + model, next);
+          return gemini(input, { ...opts, _tmode: next }, json, retried);
+        }
+        if (lite) { LS.set("jobapp-no-lite", "1"); return gemini(input, { ...opts, _noLite: true, _tmode: undefined }, json, retried); }
+        if (json && !opts._noMime) return gemini(input, { ...opts, _noMime: true }, json, retried);
       }
       const e = err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg); e.status = res.status; throw e;
     }
