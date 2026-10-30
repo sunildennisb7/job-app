@@ -283,7 +283,8 @@
     if (!s.geminiKey) throw err("not_granted", "Add your free Gemini key in My CV › App connections");
     const body = {
       contents: toContents(input),
-      generationConfig: { maxOutputTokens: 8192, temperature: json ? 0.2 : 0.6, ...(json && !opts._noMime ? { responseMimeType: "application/json" } : {}) },
+      generationConfig: { maxOutputTokens: 8192, temperature: json ? 0.2 : 0.6, ...(json && !opts._noMime && !opts.tools ? { responseMimeType: "application/json" } : {}) },
+      ...(opts.tools ? { tools: opts.tools } : {}),
     };
     const stream = typeof opts.onText === "function";
     // Quick jobs (like picking what to change in a CV) use Google's faster Flash-Lite model when this key has it.
@@ -430,7 +431,23 @@
 
   const services = { db, sample, downloads, mcp };
   window.claude = { use: name => Promise.resolve(services[name] || null) };
-  window.jobapp = { settings, saveSettings, syncNow, syncState, gh, db, sample, b64decode,
+  /** Opens a job advert link through Google (the browser itself can't read other sites) and returns its details. */
+  async function readJobUrl(url, opts = {}) {
+    const { text } = await gemini(`Open this job advert and read it: ${url}
+
+Return ONLY a JSON object, no other text:
+{"ok": true if you could read a job advert at that link, else false,
+ "title": "", "company": "", "location": "", "pay": "short, like £35-45k or £20/hour, or empty",
+ "workType": "permanent | contract | temp | part-time | freelance | empty",
+ "hours": number of hours a week if stated, else null,
+ "closingDate": "YYYY-MM-DD or empty",
+ "description": "the full advert text, word for word, up to 6000 characters: duties, requirements, skills, benefits"}`,
+      { ...opts, tools: [{ url_context: {} }] }, true);
+    const clean = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
+    const m = clean.match(/\{[\s\S]*\}/);
+    try { return JSON.parse(m ? m[0] : clean); } catch (e) { throw err("bad_json", "Couldn't read that page"); }
+  }
+  window.jobapp = { settings, saveSettings, syncNow, syncState, gh, db, sample, b64decode, readJobUrl,
                     setupCode, setupLink, applySetupCode, setupFromLink, _merge: mergeRecord };
   if (gh.ready()) queueMicrotask(syncNow); else setStatus("local", syncState.message);
 })();

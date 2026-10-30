@@ -698,7 +698,7 @@ ${jobBlock(j)}
 MASTER CV:
 ${cv}`;
   if(kind==="letter")return `Write a cover letter from Sunil Dennis for this job.\n\n${RULES}\n- 250-350 words, 4 short paragraphs: why this role and company, two or three concrete matches between the advert and his experience, what he would bring, a confident close.\n- Plain and specific, no clichés like "I am writing to express my interest".\n- Mention right to work in one plain sentence, based on: ${visaLine(j)}\n- Start with 'Dear Hiring Manager,' unless the advert names a person. End with 'Kind regards,' and 'Sunil Dennis' and his phone and email from the CV.\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
-  return `Build an interview prep pack for Sunil for this job.\n\n${RULES}\n- You cannot browse, so base company points only on the advert and say what Sunil should look up himself.\n\nUse these sections:\n## The role in one minute (what they really need, from the advert)\n## Your 2-minute pitch (first person, tailored, from the CV)\n## Likely questions and strong answers (10 questions: mix of technical on their stack and behavioural; answer behavioural ones in STAR form using real CV examples)\n## Technical topics to revise (bullets, most likely first)\n## Gaps and how to handle them (where the CV is thin against the advert, and an honest way to answer)\n## Questions to ask them (5)\n## Right to work answer (one or two sentences, based on: ${visaLine(j)})\n## Check before the interview (things to look up about the company)\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
+  return `Build an interview prep pack for Sunil for this job.\n\n${RULES}\n- You cannot browse, so base company points only on the advert and say what Sunil should look up himself.\n\nUse these sections:\n## The role in one minute (what they really need, from the advert)\n## Your 2-minute pitch (first person, tailored, from the CV)\n## Likely questions and strong answers (10 questions: mix of technical on their stack and behavioural; answer behavioural ones in STAR form using real CV examples)\n## Technical topics to revise (bullets, most likely first)\n## Gaps and how to handle them (where the CV is thin against the advert, and an honest way to answer)\n## Online tests and assessments to expect (what this kind of employer and role usually uses, such as coding tests, take-home tasks, technical screens or aptitude tests; how to practise for each; then 5 practice tasks at the right level with a short model answer or approach for each)\n## Questions to ask them (5)\n## Right to work answer (one or two sentences, based on: ${visaLine(j)})\n## Check before the interview (things to look up about the company)\n\n${jobBlock(j)}\n\nMASTER CV:\n${cv}`;
 }
 function aiNote(t){const n=$("d-aiNote");n.textContent=t||"";n.hidden=!t}
 async function advertKeywords(j,signal){
@@ -1279,6 +1279,84 @@ $("cvSave").onclick=async()=>{
   hint.append(a, ".");
   hint.id = "setupHint";
   $("view-jobs").insertBefore(hint, $("view-jobs").firstChild);
+})();
+
+/* ---------- Paste a job link: read the advert, save the job, then write the CV, cover letter and interview + test prep ---------- */
+(function quickApply() {
+  const box = el("div", "panel"); box.id = "qaPanel";
+  box.innerHTML = `
+    <h3>New job from a link</h3>
+    <label>Job link<input id="qa-url" type="url" inputmode="url" autocomplete="off" placeholder="Paste the job advert link"></label>
+    <details id="qa-more"><summary class="note" style="cursor:pointer">Link won't open? Paste the advert text instead</summary>
+      <textarea id="qa-text" rows="5" placeholder="Paste the full job advert here" style="margin-top:6px"></textarea></details>
+    <div class="actions"><span class="status" id="qa-msg"></span><button class="btn primary" id="qa-go" type="button">Make CV, letter and prep</button></div>
+    <ol id="qa-steps" class="note" hidden style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px"></ol>`;
+  const view = $("view-jobs"); view.insertBefore(box, view.children[1] || null);
+  const STEPS = [["read", "Read the advert"], ["save", "Save the job to your tracker"], ["cv", "Tailor your CV"],
+                 ["letter", "Write your cover letter"], ["prep", "Interview and test prep"]];
+  const msg = t => { $("qa-msg").textContent = t || ""; };
+  function steps(state) {
+    const ol = $("qa-steps"); ol.hidden = false; ol.replaceChildren();
+    for (const [k, label] of STEPS) {
+      const s = state[k] || "";
+      ol.append(el("li", null, (s === "done" ? "✓ " : s === "doing" ? "… " : s === "fail" ? "✗ " : "") + label));
+    }
+  }
+  const visaFor = r => (r.hours != null && r.hours <= 20) || /part-time/i.test(r.workType || "") ? "now" : "later";
+  async function extractFromText(text) {
+    return await sample.json(`Extract job details from this job advert. Return JSON: {"title": "", "company": "", "location": "", "pay": "short or empty", "workType": "permanent | contract | temp | part-time | freelance | empty", "hours": number or null, "closingDate": "YYYY-MM-DD or empty"}\n\nADVERT:\n${text.slice(0, 12000)}`);
+  }
+  $("qa-go").onclick = async () => {
+    const url = $("qa-url").value.trim(), pasted = $("qa-text").value.trim();
+    if (!url && !pasted) { msg("Paste a job link first."); $("qa-url").focus(); return; }
+    if (url && !/^https?:\/\//i.test(url)) { msg("That doesn't look like a link. It should start with https://"); return; }
+    if (!jobapp.settings().geminiKey) { msg("Add your free Gemini AI key in My CV › App connections first."); return; }
+    if (!db) return;
+    const btn = $("qa-go"); btn.disabled = true; const st = {}; steps(st);
+    try {
+      // 1. Read the advert
+      st.read = "doing"; steps(st); msg("Opening the advert…");
+      let r = null;
+      if (pasted) { r = await extractFromText(pasted); r.description = pasted; r.ok = true; }
+      else {
+        try { r = await jobapp.readJobUrl(url); } catch (e) { if (e.code !== "bad_json") throw e; r = { ok: false }; }
+        if (!r || !r.ok || !(r.description || "").trim() || (r.description || "").length < 200) {
+          st.read = "fail"; steps(st); $("qa-more").open = true;
+          msg("Couldn't read that page (LinkedIn and some job sites block it). Paste the advert text in the box above, then tap again.");
+          return;
+        }
+      }
+      st.read = "done";
+      // 2. Save it (or reuse it if it's already in the tracker)
+      st.save = "doing"; steps(st); msg("Saving the job…");
+      const existing = url && jobs.find(j => j.url === url);
+      const now = new Date().toISOString();
+      const data = { title: r.title || "Job", company: r.company || "", location: r.location || "", url: url || "", pay: r.pay || "",
+        visa: visaFor(r), description: (r.description || "").trim(), workType: r.workType || "", hours: r.hours ?? null,
+        next: "Check the CV and cover letter, then apply", nextDate: r.closingDate || "", updated: now };
+      let id;
+      if (existing) { id = existing.id; await db.collection("jobs").doc(id).update(data); }
+      else { const ref = await db.collection("jobs").add({ ...data, status: "saved", notes: r.closingDate ? `Closes ${r.closingDate}` : "", created: now }); id = ref.id; }
+      await new Promise(res => setTimeout(res, 60)); // let the job list pick it up
+      st.save = "done"; steps(st);
+      // 3-5. Write everything, one after another, in the job's detail view
+      openDetail(id);
+      for (const kind of ["cv", "letter", "prep"]) {
+        st[kind] = "doing"; steps(st); msg(STEPS.find(s => s[0] === kind)[1] + "…");
+        await generate(kind);
+        const j = jobs.find(x => x.id === id);
+        st[kind] = j && j[KINDS[kind].field] ? "done" : "fail"; steps(st);
+        if (st[kind] === "fail") { msg("Stopped: " + ($("d-aiNote").textContent || "the AI couldn't finish.") + " Tap the buttons in the job to try again."); return; }
+      }
+      msg("All done. Your CV, cover letter and prep are saved in the job.");
+      $("qa-url").value = ""; $("qa-text").value = ""; $("qa-more").open = false;
+    } catch (e) {
+      msg(e.code === "quota" ? "Your free Google AI limit is used up for now. Try again later." :
+          e.code === "not_granted" ? "Your Gemini AI key wasn't accepted. Check My CV › App connections." :
+          "Couldn't finish (" + (e.code || "error") + (e.message && e.message !== e.code ? ": " + e.message : "") + ").");
+      for (const k of Object.keys(st)) if (st[k] === "doing") st[k] = "fail"; steps(st);
+    } finally { btn.disabled = false; }
+  };
 })();
 
 /* ---------- New jobs from the alert bot ---------- */
