@@ -735,6 +735,40 @@ function cvFromPlain(text){
     const prev=out[out.length-1]||"";
     out.push(prev.startsWith("### ")?`*${l}*`:"### "+l)}
   return out.join("\n")}
+// A layout is only trusted when every role and project has bullets and the skills are separate lines.
+function cvGood(p){if(!p)return null;const bl=p.blocks.filter(b=>/EXPERIENCE|PROJECT/.test(b.sec));
+  return bl.length&&bl.every(b=>b.bullets.length)&&p.skills.length>=2&&p.blocks.reduce((n,b)=>n+b.bullets.length,0)>=6?p:null}
+// CV text copied from a PDF loses its bullet points and line structure. Rebuild the layout once with AI, word for word,
+// and save it to My CV so every later CV is quick.
+async function cvToMarkdownAI(text,signal,onText){
+  const {text:md}=await sample(`Convert this CV into the exact Markdown layout below. Keep every word, date and link exactly; do not add, remove, shorten or reword anything. Rejoin lines that were broken in the middle of a sentence. Every bullet point becomes its own "- " line (a new bullet usually starts with a capitalised past-tense verb).
+
+LAYOUT:
+# FULL NAME
+HEADLINE LINE
+Contact line (city | phone | [email](mailto:email))
+[LinkedIn](url) | [GitHub](url) | [Portfolio](url)
+
+## SECTION HEADING IN CAPITALS
+(summary as one paragraph)
+**Skill category:** item, item, item      (one line per category, no bullets)
+### Job Title | Company
+*Place • Month YYYY – Month YYYY*
+- bullet
+### Project Name
+*Technologies: a, b, c*
+- bullet
+### Degree or certification
+*Institution, Country | dates*      (only if there is such a line)
+- bullet (if any)
+
+Use these links for the header: LinkedIn https://www.linkedin.com/in/sunil-dennis-7178b2155, GitHub https://github.com/sunildennisb7, Portfolio https://sunildennisb7.github.io/
+Output only the Markdown.
+
+CV:
+${text}`,{signal,modelTier:"quick",cache:false,...(onText?{onText}:{})});
+  // Sunil asked (30 Oct 2026) for the Key Achievements section to be left out of his CVs.
+  return md.trim().replace(/^```(?:markdown|md)?\s*/i,"").replace(/```\s*$/,"").replace(/\n## KEY ACHIEVEMENTS[^\n]*\n[\s\S]*?(?=\n## |$)/i,"\n")}
 function cvParse(md){
   const lines=md.replace(/\r/g,"").split("\n");if(!lines.some(l=>/^#\s/.test(l))||lines.filter(l=>/^##\s/.test(l)).length<3||!lines.some(l=>/^###\s/.test(l)))return null;
   const r={lines,headline:-1,summary:[],skills:[],blocks:[]};let sec="",block=null,seenH1=false;
@@ -839,11 +873,17 @@ async function generate(kind){
   $("d-live").hidden=false;const title=$("d-liveTitle");ringBegin();
   const out=$("d-liveOut");
   try{
-    let keywords=[],text="",truncated=false;const parsed=kind==="cv"?(cvParse(cv)||cvParse(cvFromPlain(cv))):null;const t0=Date.now();let tAI=0;
+    let keywords=[],text="",truncated=false;let parsed=kind==="cv"?(cvGood(cvParse(cv))||cvGood(cvParse(cvFromPlain(cv)))):null;const t0=Date.now();let tAI=0;
+    if(kind==="cv"&&!parsed){
+      title.textContent="Setting up your CV layout (one time only)…";out.textContent="Your CV in My CV lost its bullet points (this happens when it's copied from a PDF). Rebuilding it word for word.";ringCreep(20);
+      const md=await cvToMarkdownAI(cv,myCtl.signal,({text})=>ringStream(text.length,cv.length*1.1,20,45));
+      const p=cvGood(cvParse(md));
+      if(p){cv=md;parsed=p;try{await db.doc("profile/cv").set({text:md,updated:new Date().toISOString()})}catch(e){}}
+    }
     if(parsed){
       title.textContent="Tailoring your CV…";out.textContent="Picking what to bring forward for this job.";
-      const expected=900+p0len(parsed);ringCreep(35);
-      ({text,keywords}=await tailorCvFast(j,parsed,myCtl.signal,({text})=>{ringStream(text.length,expected,35,90);out.textContent=`Writing changes… ${text.length} characters so far`}));
+      const expected=900+p0len(parsed);ringCreep(Math.max(35,ringVal+10));
+      ({text,keywords}=await tailorCvFast(j,parsed,myCtl.signal,({text})=>{ringStream(text.length,expected,Math.max(35,ringVal),90);out.textContent=`Writing changes… ${text.length} characters so far`}));
       tAI=Date.now()-t0;ring(90,"Building your CV…");
       if(!keywords.length&&j.keywords)keywords=j.keywords;j.keywords=keywords;renderMd(out,text);
     }else{
