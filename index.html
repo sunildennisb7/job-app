@@ -377,6 +377,7 @@ async function buildDocx(md,title){
 /* --- Tailored CV files in the same design as Sunil's own CV: Calibri (Carlito), blue name and section headings with a
    blue rule, "Title | Company" with the company in blue, grey italic place and dates, a name footer on each page. --- */
 const CV_BLUE="1F4E9A",CV_GREY="555555";
+const CV_LINKS={linkedin:"https://www.linkedin.com/in/sunil-dennis-7178b2155",github:"https://github.com/sunildennisb7",portfolio:"https://sunildennisb7.github.io/"};
 const cvRgb=h=>[0,2,4].map(i=>parseInt(h.slice(i,i+2),16));
 function cvRuns(t){const out=[];const re=/\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^)\s]+)\)/g;let last=0,m;
   while((m=re.exec(t))){if(m.index>last)out.push({t:t.slice(last,m.index)});
@@ -387,7 +388,10 @@ function cvBlocks(md){
   for(const raw of md.replace(/\r/g,"").split("\n")){const line=raw.trim();if(!line||/^(-{3,}|\*{3,}|_{3,})$/.test(line))continue;
     const h=line.match(/^(#{1,3})\s+(.*)/),li=line.match(/^[-*•]\s+(.*)/),meta=line.match(/^[*_](?![*_])(.+?)[*_]$/);
     if(h){const type="h"+h[1].length;inHead=type==="h1";blocks.push({type,runs:cvRuns(h[2].replace(/\*\*/g,""))});continue}
-    if(inHead){blocks.push({type:headN++===0&&blocks.length===1?"headline":"contact",runs:cvRuns(line)});continue}
+    if(inHead){const runs=cvRuns(line);
+      // The header links always go to Sunil's own pages, whatever the AI or an older CV text had.
+      for(const r of runs){const u=CV_LINKS[r.t.trim().toLowerCase()];if(u)r.link=u}
+      blocks.push({type:headN++===0&&blocks.length===1?"headline":"contact",runs});continue}
     if(li){blocks.push({type:"li",runs:cvRuns(li[1])});continue}
     if(meta&&!/\*\*/.test(line)){blocks.push({type:"meta",runs:[{t:meta[1]}]});continue}
     const runs=cvRuns(line);blocks.push({type:runs[0]&&runs[0].b&&/:\s*$/.test(runs[0].t)?"skill":"p",runs})}
@@ -658,7 +662,7 @@ function prompt(kind,j){
 The MASTER CV below is Sunil's own CV. The tailored CV must look exactly like it and keep ALL of its content.
 
 KEEP EXACTLY (never drop, merge or add any of these):
-- The same sections, with these headings in this order: PROFESSIONAL SUMMARY, TECHNICAL SKILLS, PROFESSIONAL EXPERIENCE, SELECTED PROJECTS, CERTIFICATIONS & TRAINING, KEY ACHIEVEMENTS & TECHNICAL COMMUNITY CONTRIBUTIONS, EDUCATION (plus any other section the master CV has, in its place).
+- The same sections, with these headings in this order: PROFESSIONAL SUMMARY, TECHNICAL SKILLS, PROFESSIONAL EXPERIENCE, SELECTED PROJECTS, CERTIFICATIONS & TRAINING, EDUCATION (only the sections the master CV has; plus any other section it has, in its place).
 - Every role, project, certification, achievement and degree, with every bullet, date, place, link and the contact lines word for word.
 - His wording. Keep each bullet his own sentence.
 
@@ -672,7 +676,7 @@ EXACT MARKDOWN FORMAT (same as the master CV):
 # SUNIL DENNIS
 HEADLINE IN CAPITALS
 Sheffield, UK | 07721301256 | [sunildennisb7@gmail.com](mailto:sunildennisb7@gmail.com)
-[LinkedIn](url) | [GitHub](url) | [Portfolio](url)
+[LinkedIn](https://www.linkedin.com/in/sunil-dennis-7178b2155) | [GitHub](https://github.com/sunildennisb7) | [Portfolio](https://sunildennisb7.github.io/)
 ## SECTION HEADING
 **Skill category:** item, item, item   (skills are lines, not bullets)
 ### Job Title | Company
@@ -714,6 +718,23 @@ function atsCheck(md,keywords,pages){
 /* --- Fast tailoring: the AI returns only what changes (headline, summary, skill order, bullet order, small word swaps)
    as short JSON, and the CV is rebuilt from the master CV here. One quick AI call instead of rewriting the whole CV,
    and nothing from the master CV can go missing. --- */
+// A CV pasted as plain text (no Markdown) is converted to the Markdown layout, so it still gets the fast path.
+function cvFromPlain(text){
+  const src=String(text||"").replace(/\r/g,"").split("\n").map(l=>l.trim());const out=[];let sec="",n=0;
+  const link=l=>l.replace(/\b([A-Za-z][\w ]{1,20}):\s*(https?:\/\/\S+)/g,"[$1]($2)").replace(/(^|[\s|])([\w.+-]+@[\w-]+\.[\w.]+)/g,"$1[$2](mailto:$2)");
+  for(const l of src){if(!l)continue;
+    if(n===0){out.push("# "+l.replace(/^#+\s*/,""));n++;continue}
+    const bullet=l.match(/^[•\-*▪●]\s*(.*)/);
+    if(!bullet&&l.length>3&&!/\|/.test(l)&&/[A-Z]/.test(l)&&l===l.toUpperCase()&&!/^\d/.test(l)&&(sec||n>1)){sec=l.replace(/^#+\s*/,"");out.push("","## "+sec);n++;continue}
+    n++;
+    if(!sec){out.push(link(l));continue}
+    if(bullet){out.push("- "+bullet[1]);continue}
+    const up=sec.toUpperCase();
+    if(/SUMMARY|PROFILE/.test(up)){out.push(l);continue}
+    if(/SKILL/.test(up)){const m=l.match(/^([^:]{2,40}):\s*(.+)$/);out.push(m?`**${m[1]}:** ${m[2]}`:l);continue}
+    const prev=out[out.length-1]||"";
+    out.push(prev.startsWith("### ")?`*${l}*`:"### "+l)}
+  return out.join("\n")}
 function cvParse(md){
   const lines=md.replace(/\r/g,"").split("\n");if(!lines.some(l=>/^#\s/.test(l))||lines.filter(l=>/^##\s/.test(l)).length<3||!lines.some(l=>/^###\s/.test(l)))return null;
   const r={lines,headline:-1,summary:[],skills:[],blocks:[]};let sec="",block=null,seenH1=false;
@@ -818,12 +839,12 @@ async function generate(kind){
   $("d-live").hidden=false;const title=$("d-liveTitle");ringBegin();
   const out=$("d-liveOut");
   try{
-    let keywords=[],text="",truncated=false;const parsed=kind==="cv"?cvParse(cv):null;
+    let keywords=[],text="",truncated=false;const parsed=kind==="cv"?(cvParse(cv)||cvParse(cvFromPlain(cv))):null;const t0=Date.now();let tAI=0;
     if(parsed){
       title.textContent="Tailoring your CV…";out.textContent="Picking what to bring forward for this job.";
       const expected=900+p0len(parsed);ringCreep(35);
       ({text,keywords}=await tailorCvFast(j,parsed,myCtl.signal,({text})=>{ringStream(text.length,expected,35,90);out.textContent=`Writing changes… ${text.length} characters so far`}));
-      ring(90,"Building your CV…");
+      tAI=Date.now()-t0;ring(90,"Building your CV…");
       if(!keywords.length&&j.keywords)keywords=j.keywords;j.keywords=keywords;renderMd(out,text);
     }else{
       if(kind==="cv"){title.textContent="Reading the advert for ATS keywords…";out.textContent="Finding what the employer's screening software looks for.";keywords=await advertKeywords(j,myCtl.signal);j.keywords=keywords}
@@ -858,6 +879,7 @@ async function generate(kind){
     $("d-live").hidden=true;
     if(truncated)aiNote("This came out cut short. Tap Write again for a fuller version.");
     else if(noAdvert)aiNote("This job has no advert saved, so it's tailored to the job title only. For a sharper match, tap Edit details, paste the advert, then Write again.");
+    if(parsed&&$("d-aiNote").hidden)aiNote(`Done in ${Math.round((Date.now()-t0)/1000)}s (Google AI ${Math.round(tAI/1000)}s, layout and 2-page check ${Math.round((Date.now()-t0-tAI)/1000)}s).`);
   }catch(e){
     if(e.code==="cancelled"){$("d-live").hidden=true}
     else{if(e.text)renderMd(out,e.text);title.textContent="Couldn't finish";$("d-ring").hidden=true;$("d-ringSub").textContent="";
