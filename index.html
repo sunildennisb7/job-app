@@ -374,7 +374,7 @@ async function buildDocx(md,title){
   z.file("word/document.xml",document_);z.file("word/styles.xml",styles);z.file("word/numbering.xml",numbering);
   return z.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"})}
 
-/* --- Tailored CV files in the same design as Sunil's own CV: Calibri (Carlito), blue name and section headings with a
+/* --- Tailored CV files in the same design as Sunil's own CV, in Arial (Liberation Sans, the same letter widths), blue name and section headings with a
    blue rule, "Title | Company" with the company in blue, grey italic place and dates, a name footer on each page. --- */
 const CV_BLUE="1F4E9A",CV_GREY="555555";
 const CV_LINKS={linkedin:"https://www.linkedin.com/in/sunil-dennis-7178b2155",github:"https://github.com/sunildennisb7",portfolio:"https://sunildennisb7.github.io/"};
@@ -407,27 +407,27 @@ function cvFooter(blocks){
   return role?`${nm} | ${role===role.toUpperCase()?cvTitleCase(role):role}`:nm}
 // Sizes and gaps in points, measured from Sunil's CV (A4, 51pt side margins, 10.5pt body).
 const CV_ST={
-  h1:{size:22,b:1,c:CV_BLUE,center:1,lh:26.4,after:1},
-  headline:{size:12,b:1,center:1,caps:1,lh:15.6,after:1.8},
-  contact:{size:10.5,center:1,lh:13.7},
-  h2:{size:11,b:1,c:CV_BLUE,caps:1,before:8.8,lh:14.3,after:4.9,rule:1,keep:40},
-  h3:{size:10.5,b:1,before:4.8,lh:13.5,keep:30},
-  meta:{size:9.5,i:1,c:CV_GREY,lh:15.2},
-  li:{size:10.5,lh:14.1,indent:15.5},
-  skill:{size:10.5,lh:14.75},
-  p:{size:10.5,lh:13.8}};
+  h1:{size:20,b:1,c:CV_BLUE,center:1,lh:24,after:1},
+  headline:{size:11.5,b:1,center:1,caps:1,lh:14.9,after:1.8},
+  contact:{size:10,center:1,lh:13},
+  h2:{size:10.5,b:1,c:CV_BLUE,caps:1,before:8.8,lh:13.6,after:4.9,rule:1,keep:40},
+  h3:{size:10,b:1,before:4.8,lh:12.9,keep:30},
+  meta:{size:9,i:1,c:CV_GREY,lh:14.5},
+  li:{size:10,lh:13.4,indent:15.5},
+  skill:{size:10,lh:14},
+  p:{size:10,lh:13.2}};
 let cvFontData=null;
 async function loadCvFonts(){
   if(cvFontData)return cvFontData;
-  try{const get=async n=>{const r=await fetch("fonts/Carlito-"+n+".ttf");if(!r.ok)throw new Error("font");const u=new Uint8Array(await r.arrayBuffer());
+  try{const get=async n=>{const r=await fetch("fonts/LiberationSans-"+n+".ttf");if(!r.ok)throw new Error("font");const u=new Uint8Array(await r.arrayBuffer());
       let s="";for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return s};
     const [normal,bold,italic]=await Promise.all(["Regular","Bold","Italic"].map(get));return cvFontData={normal,bold,italic}}
   catch(e){return null}}
 async function buildCvPdf(md,title){
   await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
   const doc=new window.jspdf.jsPDF({unit:"pt",format:"a4"});doc.setProperties({title,author:"Sunil Dennis",creator:"Job tracker"});
-  const fonts=await loadCvFonts();const FAM=fonts?"Carlito":"helvetica";const safe=fonts?(t=>t.replace(/ /g," ")):pdfSafe;
-  if(fonts)for(const [st,data] of Object.entries(fonts)){const n=`Carlito-${st}.ttf`;doc.addFileToVFS(n,data);doc.addFont(n,"Carlito",st)}
+  const fonts=await loadCvFonts();const FAM=fonts?"LiberationSans":"helvetica";const safe=fonts?(t=>t.replace(/ /g," ")):pdfSafe;
+  if(fonts)for(const [st,data] of Object.entries(fonts)){const n=`LiberationSans-${st}.ttf`;doc.addFileToVFS(n,data);doc.addFont(n,"LiberationSans",st)}
   const font=(b,i)=>doc.setFont(FAM,b?"bold":i?"italic":"normal");
   const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),L=51,R=W-51,TOP=39.5,BOTTOM=H-56;
   const blocks=cvBlocks(md);const footer=cvFooter(blocks);
@@ -469,19 +469,19 @@ async function buildCvDocx(md,title){
     if(!r.link)return x;links.push(r.link);return `<w:hyperlink r:id="rIdL${links.length}">${x}</w:hyperlink>`};
   const style={h1:"CvName",headline:"CvHeadline",contact:"CvContact",h2:"Heading1",h3:"Heading2",meta:"CvMeta",li:"ListBullet",skill:"CvSkill",p:"Normal"};
   const body=blocks.map(b=>`<w:p><w:pPr><w:pStyle w:val="${style[b.type]||"Normal"}"/>${b.type==="li"?'<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>':""}</w:pPr>${b.runs.map(run).join("")}</w:p>`).join("");
-  const font='<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri" w:eastAsia="Calibri"/>';
+  const font='<w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial" w:eastAsia="Arial"/>';
   const ps=(id,name,ppr,rpr,extra="")=>`<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/>${extra}<w:pPr>${ppr}</w:pPr><w:rPr>${rpr}</w:rPr></w:style>`;
-  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="21"/><w:szCs w:val="21"/><w:lang w:val="en-GB"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="264" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="en-GB"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
    +`<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="40"/></w:pPr></w:style>`
-   +ps("CvName","Title",'<w:jc w:val="center"/><w:spacing w:after="60" w:line="240" w:lineRule="auto"/>',`<w:b/><w:color w:val="${CV_BLUE}"/><w:sz w:val="44"/><w:szCs w:val="44"/>`)
-   +ps("CvHeadline","Subtitle",'<w:jc w:val="center"/><w:spacing w:after="60"/>','<w:b/><w:caps/><w:sz w:val="24"/><w:szCs w:val="24"/>')
+   +ps("CvName","Title",'<w:jc w:val="center"/><w:spacing w:after="60" w:line="240" w:lineRule="auto"/>',`<w:b/><w:color w:val="${CV_BLUE}"/><w:sz w:val="40"/><w:szCs w:val="40"/>`)
+   +ps("CvHeadline","Subtitle",'<w:jc w:val="center"/><w:spacing w:after="60"/>','<w:b/><w:caps/><w:sz w:val="23"/><w:szCs w:val="23"/>')
    +ps("CvContact","Contact",'<w:jc w:val="center"/><w:spacing w:after="0"/>',"")
-   +ps("Heading1","heading 1",`<w:keepNext/><w:spacing w:before="200" w:after="100"/><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="1" w:color="${CV_BLUE}"/></w:pBdr><w:outlineLvl w:val="0"/>`,`<w:b/><w:caps/><w:color w:val="${CV_BLUE}"/><w:sz w:val="22"/><w:szCs w:val="22"/>`,'<w:next w:val="Normal"/>')
+   +ps("Heading1","heading 1",`<w:keepNext/><w:spacing w:before="200" w:after="100"/><w:pBdr><w:bottom w:val="single" w:sz="8" w:space="1" w:color="${CV_BLUE}"/></w:pBdr><w:outlineLvl w:val="0"/>`,`<w:b/><w:caps/><w:color w:val="${CV_BLUE}"/><w:sz w:val="21"/><w:szCs w:val="21"/>`,'<w:next w:val="Normal"/>')
    +ps("Heading2","heading 2",'<w:keepNext/><w:spacing w:before="100" w:after="0"/><w:outlineLvl w:val="1"/>','<w:b/>','<w:next w:val="Normal"/>')
-   +ps("CvMeta","Dates",'<w:keepNext/><w:spacing w:after="40"/>',`<w:i/><w:color w:val="${CV_GREY}"/><w:sz w:val="19"/><w:szCs w:val="19"/>`)
+   +ps("CvMeta","Dates",'<w:keepNext/><w:spacing w:after="40"/>',`<w:i/><w:color w:val="${CV_GREY}"/><w:sz w:val="18"/><w:szCs w:val="18"/>`)
    +ps("CvSkill","Skills line",'<w:spacing w:after="10"/>',"")
    +ps("ListBullet","List Bullet",'<w:spacing w:after="0"/><w:ind w:left="310" w:hanging="194"/>',"")
-   +ps("Footer","footer",'<w:jc w:val="center"/>',`<w:color w:val="${CV_GREY}"/><w:sz w:val="17"/><w:szCs w:val="17"/>`)+`</w:styles>`;
+   +ps("Footer","footer",'<w:jc w:val="center"/>',`<w:color w:val="${CV_GREY}"/><w:sz w:val="16"/><w:szCs w:val="16"/>`)+`</w:styles>`;
   const numbering=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="310" w:hanging="194"/></w:pPr><w:rPr>${font}</w:rPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
   const footerXml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr ${NS}><w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr><w:r><w:t xml:space="preserve">${xmlEsc(cvFooter(blocks))}</w:t></w:r></w:p></w:ftr>`;
   const document_=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${body}<w:sectPr><w:footerReference w:type="default" r:id="rIdF"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="680" w:right="1020" w:bottom="1020" w:left="1020" w:header="454" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>`;
