@@ -289,7 +289,7 @@
     const stream = typeof opts.onText === "function";
     // Quick jobs (like picking what to change in a CV) use Google's faster Flash-Lite model when this key has it.
     const lite = (opts.modelTier === "quick" || opts._liteFallback) && !opts._noLite && LS.get("jobapp-no-lite") !== "1";
-    const model = lite ? "gemini-flash-lite-latest" : (s.model || DEFAULTS.model);
+    const model = lite ? "gemini-flash-lite-latest" : (opts._model || s.model || DEFAULTS.model);
     // Flash models "think" before writing, which is slow, and a long silent think made iPhone drop the connection.
     // Keep thinking short (none for quick jobs) and stream its summaries so data keeps flowing.
     // Older models take a token budget, newer ones a level; whichever this model rejects is remembered.
@@ -351,16 +351,24 @@
       }
       const e = err(/api key|permission|denied/i.test(msg) || res.status !== 400 ? "not_granted" : "ai_" + res.status, msg); e.status = res.status; throw e;
     }
-    // Google's free tier is sometimes overloaded: wait and try again, then try another Flash model.
-    if ((res.status === 503 || res.status === 500) && lite) return gemini(input, { ...opts, _noLite: true }, json, retried);
-    if ((res.status === 503 || res.status === 500) && (opts._busy || 0) < 3 && !(opts.signal && opts.signal.aborted)) {
+    // Google's free tier is sometimes overloaded ("high demand"). Wait a little longer each time and move to
+    // another model, which has its own capacity: Flash-Lite, then another Flash model. Nothing is saved, as it passes.
+    if ((res.status === 503 || res.status === 500) && !(opts.signal && opts.signal.aborted)) {
+      if (lite && !opts._liteFallback) return gemini(input, { ...opts, _noLite: true }, json, retried);
       const n = (opts._busy || 0) + 1;
-      if (n === 3) {
-        const alt = await pickModel(s.geminiKey, s.model).catch(() => null);
-        if (alt) { saveSettings({ model: alt }); window.dispatchEvent(new CustomEvent("jobapp-model", { detail: alt })); }
+      if (n <= 5) {
+        const next = { ...opts, _busy: n };
+        if (n === 2 && !lite && !opts._noLite && LS.get("jobapp-no-lite") !== "1") next._liteFallback = true;
+        if (n === 3) {
+          next._liteFallback = false; next._noLite = true;
+          const alt = await pickModel(s.geminiKey, opts._model || s.model).catch(() => null);
+          if (alt) next._model = alt;
+        }
+        const wait = Math.min(12, 2 * 2 ** (n - 1));
+        if (typeof opts.onBusy === "function") opts.onBusy(n, wait);
+        await new Promise(r => setTimeout(r, wait * 1000));
+        return gemini(input, next, json, retried);
       }
-      await new Promise(r => setTimeout(r, 1500 * n));
-      return gemini(input, { ...opts, _busy: n }, json, retried);
     }
     if (res.status === 503 || res.status === 500) { const e = err("rate_limited", await googleSays()); e.status = res.status; throw e; }
     if (res.status === 404 && lite) { LS.set("jobapp-no-lite", "1"); return gemini(input, { ...opts, _noLite: true }, json, retried); }
@@ -442,7 +450,7 @@
     if (opts.signal) opts.signal.addEventListener("abort", () => ctl.abort());
     let text;
     try {
-      ({ text } = await gemini(`Open this job advert and read it: ${target}${li ? `\n(It is LinkedIn job ${li[1]}, originally ${url}. If that address can't be read, search for this LinkedIn job ID and use what you find.)` : ""}
+      ({ text } = await gemini(`Open this job advert and read it: ${target}${li ? `\n(It is the public page of LinkedIn job ${li[1]}, originally ${url}.)` : ""}
 
 Return ONLY a JSON object, no other text:
 {"ok": true if you could read a job advert at that link, else false,
@@ -451,11 +459,10 @@ Return ONLY a JSON object, no other text:
  "hours": number of hours a week if stated, else null,
  "closingDate": "YYYY-MM-DD or empty",
  "description": "the full advert text, word for word, up to 6000 characters: duties, requirements, skills, benefits"}`,
-        { ...opts, signal: ctl.signal, tools: li && !opts._oneTool ? [{ url_context: {} }, { google_search: {} }] : [{ url_context: {} }] }, true));
+        { ...opts, signal: ctl.signal, tools: [{ url_context: {} }] }, true));
     } catch (e) {
       if (e.code === "cancelled" && timedOut) throw err("timeout", "The page took too long to open");
       // Some models don't allow two tools together: try again with just the page reader.
-      if (li && e.code && /^ai_400$/.test(e.code) && !opts._oneTool) { clearTimeout(t); return readJobUrl(url, { ...opts, _oneTool: true }); }
       throw e;
     } finally { clearTimeout(t); }
     const clean = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");

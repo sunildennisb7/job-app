@@ -923,7 +923,7 @@ async function generate(kind){
   }catch(e){
     if(e.code==="cancelled"){$("d-live").hidden=true}
     else{if(e.text)renderMd(out,e.text);title.textContent="Couldn't finish";$("d-ring").hidden=true;$("d-ringSub").textContent="";
-      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?(e.daily?"Your free Google AI limit for today is used up. It resets at about 8am UK time.":"Google's free AI allows only a few requests a minute. Wait a minute and tap again."):e.code==="rate_limited"?"Google's AI is busy just now. Try again in a minute.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+")"+(e.message&&e.message!==e.code?". Google says: "+e.message:"")+". Try again.");if(!e.text)out.textContent=$("d-aiNote").textContent}
+      aiNote(e.code==="not_granted"?"Add your free Gemini AI key in My CV › App connections, then try again.":e.code==="quota"?(e.daily?"Your free Google AI limit for today is used up. It resets at about 8am UK time.":"Google's free AI allows only a few requests a minute. Wait a minute and tap again."):e.code==="rate_limited"?"Google's free AI is very busy right now. The app kept trying for about 30 seconds on 3 different models. Try again in a few minutes.":e.code==="offline"||e.code==="interrupted"?"The connection dropped while writing. Keep the app open on screen until it finishes, then tap Write again.":"Couldn't finish writing ("+e.code+")"+(e.message&&e.message!==e.code?". Google says: "+e.message:"")+". Try again.");if(!e.text)out.textContent=$("d-aiNote").textContent}
   }finally{ringEnd();document.querySelectorAll(".tools .btn").forEach(b=>b.disabled=false)}
 }
 const p0len=p=>p.summary.reduce((n,i)=>n+p.lines[i].length,0)+p.skills.reduce((n,x)=>n+p.lines[x.i].length,0);
@@ -1321,7 +1321,16 @@ $("cvSave").onclick=async()=>{
       else {
         const t0 = Date.now(); const tick = setInterval(() => msg(`Opening the advert… ${Math.round((Date.now() - t0) / 1000)}s`), 1000);
         try { r = await jobapp.readJobUrl(url); }
-        catch (e) { if (e.code === "quota" || e.code === "not_granted") throw e; r = { ok: false }; }
+        catch (e) {
+          if (e.code === "not_granted") throw e;
+          // Reading web pages has its own, smaller free allowance at Google. When it's used up, pasting the text still works.
+          if (e.code === "quota") {
+            st.read = "fail"; steps(st); $("qa-more").open = true; $("qa-text").focus();
+            msg("Google's free limit for opening web pages is used up for now" + (e.message ? ` (Google says: ${e.message.slice(0, 160)})` : "") + ". Paste the job description in the box above and tap again: that still works.");
+            return;
+          }
+          r = { ok: false };
+        }
         finally { clearInterval(tick); }
         if (!r || !r.ok || !(r.description || "").trim() || (r.description || "").length < 200) {
           st.read = "fail"; steps(st); $("qa-more").open = true;
@@ -1355,8 +1364,9 @@ $("cvSave").onclick=async()=>{
       msg("All done. Your CV, cover letter and prep are saved in the job.");
       $("qa-url").value = ""; $("qa-text").value = ""; $("qa-more").open = false;
     } catch (e) {
-      msg(e.code === "quota" ? "Your free Google AI limit is used up for now. Try again later." :
+      msg(e.code === "quota" ? (e.daily ? "Your free Google AI limit for today is used up. It resets at about 8am UK time." : "Google's free AI allows only a few requests a minute. Wait a minute and tap again.") + (e.message ? ` (Google says: ${e.message.slice(0, 160)})` : "") :
           e.code === "not_granted" ? "Your Gemini AI key wasn't accepted. Check My CV › App connections." :
+          e.code === "rate_limited" ? "Google's free AI is very busy right now. The app kept trying for about 30 seconds on 3 different models. Try again in a few minutes." :
           "Couldn't finish (" + (e.code || "error") + (e.message && e.message !== e.code ? ": " + e.message : "") + ").");
       for (const k of Object.keys(st)) if (st[k] === "doing") st[k] = "fail"; steps(st);
     } finally { btn.disabled = false; }
