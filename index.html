@@ -768,7 +768,17 @@ Output only the Markdown.
 CV:
 ${text}`,{signal,modelTier:"quick",cache:false,...(onText?{onText}:{})});
   // Sunil asked (30 Oct 2026) for the Key Achievements section to be left out of his CVs.
-  return md.trim().replace(/^```(?:markdown|md)?\s*/i,"").replace(/```\s*$/,"").replace(/\n## KEY ACHIEVEMENTS[^\n]*\n[\s\S]*?(?=\n## |$)/i,"\n")}
+  return cvHouseRules(md.trim().replace(/^```(?:markdown|md)?\s*/i,"").replace(/```\s*$/,"")).trim()}
+// Sunil's CV rules: no Key Achievements (30 Oct 2026) or Certifications & Training (7 Nov 2026) section,
+// and MMloqz projects show the company after the project name (7 Nov 2026).
+const CV_PROJECT_CO={"commercial visual website builder":"MMloqz (MM Låsesmed Group)","e-commerce content management system":"MMloqz (MM Låsesmed Group)"};
+function cvHouseRules(md){
+  md=String(md||"").replace(/\r/g,"").replace(/(^|\n)## (KEY ACHIEVEMENTS|CERTIFICATIONS?)\b[^\n]*\n[\s\S]*?(?=\n## |$)/gi,"$1").replace(/\n{3,}/g,"\n\n");
+  let sec="";
+  return md.split("\n").map(l=>{const t=l.trim();if(/^##\s/.test(t)){sec=t.toUpperCase();return l}
+    const m=/PROJECT/.test(sec)&&t.match(/^###\s+(.+)$/);
+    if(m&&!m[1].includes(" | ")){const co=CV_PROJECT_CO[m[1].replace(/\*\*/g,"").trim().toLowerCase()];if(co)return `### ${m[1].trim()} | ${co}`}
+    return l}).join("\n")}
 function cvParse(md){
   const lines=md.replace(/\r/g,"").split("\n");if(!lines.some(l=>/^#\s/.test(l))||lines.filter(l=>/^##\s/.test(l)).length<3||!lines.some(l=>/^###\s/.test(l)))return null;
   const r={lines,headline:-1,summary:[],skills:[],blocks:[]};let sec="",block=null,seenH1=false;
@@ -873,7 +883,7 @@ async function generate(kind){
   $("d-live").hidden=false;const title=$("d-liveTitle");ringBegin();
   const out=$("d-liveOut");
   try{
-    let keywords=[],text="",truncated=false;let parsed=kind==="cv"?(cvGood(cvParse(cv))||cvGood(cvParse(cvFromPlain(cv)))):null;const t0=Date.now();let tAI=0;
+    let keywords=[],text="",truncated=false;let parsed=kind==="cv"?(cvGood(cvParse(cvHouseRules(cv)))||cvGood(cvParse(cvHouseRules(cvFromPlain(cv))))):null;const t0=Date.now();let tAI=0;
     if(kind==="cv"&&!parsed){
       title.textContent="Setting up your CV layout (one time only)…";out.textContent="Your CV in My CV lost its bullet points (this happens when it's copied from a PDF). Rebuilding it word for word.";ringCreep(20);
       const md=await cvToMarkdownAI(cv,myCtl.signal,({text})=>ringStream(text.length,cv.length*1.1,20,45));
@@ -892,6 +902,7 @@ async function generate(kind){
       const expected=kind==="cv"?Math.max(3000,cv.length):kind==="letter"?2000:7000;ringCreep(25);
       ({text,truncated}=await sample(prompt(kind,j),{signal:myCtl.signal,modelTier:"complex",cache:false,onText:({text})=>{ringStream(text.length,expected,25,92);renderMd(out,text)}}));
     }
+    if(kind==="cv")text=cvHouseRules(text);
     const data={[k.field]:text};if(parsed&&keywords.length)data.keywords=keywords;
     if(kind==="cv"){
       let pages=null;
