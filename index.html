@@ -431,13 +431,8 @@ async function buildCvPdf(md,title){
   const font=(b,i)=>doc.setFont(FAM,b?"bold":i?"italic":"normal");
   const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),L=51,R=W-51,TOP=39.5,BOTTOM=H-56;
   const blocks=cvBlocks(md);const footer=cvFooter(blocks);
-  let y=TOP,prev=null;
-  for(const b of blocks){const st=CV_ST[b.type]||CV_ST.p;
-    let gap=(prev?(CV_ST[prev]||CV_ST.p).after||0:0)+(st.before||0);
-    if(b.type==="h3"&&prev&&prev!=="li"&&prev!=="p")gap=prev==="h2"?CV_ST.h2.after+1.9:1.6;
-    y+=gap;
-    if(st.keep&&y+st.lh+(st.keep||0)>BOTTOM){doc.addPage();y=TOP}
-    // words with their own style
+  // Lay out every block's lines first, so we know how tall each one is before drawing.
+  const laid=blocks.map(b=>{const st=CV_ST[b.type]||CV_ST.p;
     const words=[];for(const r of b.runs){const t=safe(st.caps?r.t.toUpperCase():r.t);
       for(const w of t.split(/(\s+)/))if(w)words.push({t:w,b:!!(st.b||r.b),i:!!(st.i||r.i),c:r.link?CV_BLUE:(r.c||st.c||"000000"),link:r.link})}
     const x0=L+(st.indent||0),avail=R-x0;const lines=[];let line=[],lw=0;
@@ -446,6 +441,18 @@ async function buildCvPdf(md,title){
       if(lw+ww>avail&&line.length){while(line.length&&/^\s+$/.test(line[line.length-1].t))lw-=line.pop().w;lines.push({items:line,w:lw});line=[];lw=0}
       line.push({...w,w:ww});lw+=ww}
     while(line.length&&/^\s+$/.test(line[line.length-1].t))lw-=line.pop().w;if(line.length)lines.push({items:line,w:lw});
+    return {b,st,x0,lines,h:lines.length*st.lh}});
+  // Sunil asked (7 Nov 2026) that a page never cuts through a bullet or paragraph: a block that doesn't fit
+  // moves whole to the next page, and a heading or date line moves with what follows it (up to the first bullet).
+  const needFrom=i=>{let h=0;for(let k=i;k<laid.length;k++){const t=laid[k].b.type;h+=laid[k].h+(k>i?8:0);
+    if(!["h2","h3","meta"].includes(t))break}return h};
+  let y=TOP,prev=null;
+  laid.forEach(({b,st,x0,lines},i)=>{
+    let gap=(prev?(CV_ST[prev]||CV_ST.p).after||0:0)+(st.before||0);
+    if(b.type==="h3"&&prev&&prev!=="li"&&prev!=="p")gap=prev==="h2"?CV_ST.h2.after+1.9:1.6;
+    y+=gap;
+    const need=needFrom(i);
+    if(y>TOP+1&&y+need>BOTTOM&&need<=BOTTOM-TOP){doc.addPage();y=TOP}
     lines.forEach((ln,k)=>{
       if(y+st.lh>BOTTOM){doc.addPage();y=TOP}
       const base=y+st.size*0.95;let x=st.center?(W-ln.w)/2:x0;
@@ -455,7 +462,7 @@ async function buildCvPdf(md,title){
         x+=it.w}
       y+=st.lh});
     if(st.rule){doc.setDrawColor(...cvRgb(CV_BLUE));doc.setLineWidth(0.9);doc.line(L-1,y-0.4,R,y-0.4)}
-    prev=b.type}
+    prev=b.type});
   const pages=doc.getNumberOfPages();
   for(let p=1;p<=pages;p++){doc.setPage(p);font(false,false);doc.setFontSize(8.5);doc.setTextColor(...cvRgb(CV_GREY));
     const t=safe(footer);doc.text(t,(W-doc.getTextWidth(t))/2,H-36)}
@@ -471,7 +478,7 @@ async function buildCvDocx(md,title){
   const body=blocks.map(b=>`<w:p><w:pPr><w:pStyle w:val="${style[b.type]||"Normal"}"/>${b.type==="li"?'<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>':""}</w:pPr>${b.runs.map(run).join("")}</w:p>`).join("");
   const font='<w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial" w:eastAsia="Arial"/>';
   const ps=(id,name,ppr,rpr,extra="")=>`<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/>${extra}<w:pPr>${ppr}</w:pPr><w:rPr>${rpr}</w:rPr></w:style>`;
-  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="en-GB"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="en-GB"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:keepLines/><w:widowControl/><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
    +`<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="40"/></w:pPr></w:style>`
    +ps("CvName","Title",'<w:jc w:val="center"/><w:spacing w:after="60" w:line="240" w:lineRule="auto"/>',`<w:b/><w:color w:val="${CV_BLUE}"/><w:sz w:val="40"/><w:szCs w:val="40"/>`)
    +ps("CvHeadline","Subtitle",'<w:jc w:val="center"/><w:spacing w:after="60"/>','<w:b/><w:caps/><w:sz w:val="23"/><w:szCs w:val="23"/>')
